@@ -91,10 +91,113 @@ func (e *emitter) emitPipelineCTE(pipe *ir.Pipeline) (string, error) {
 
 func (e *emitter) emitSegmentPG(seg pgSegment, from, alias string) (string, error) {
 	if len(seg.stages) == 1 && isBreakpoint(seg.stages[0]) {
-		inner := fmt.Sprintf("SELECT * FROM %s", from)
-		return e.emitStage(inner, seg.stages[0])
+		return e.emitBreakpointDirectPG(seg.stages[0], from, alias)
 	}
 	return e.emitMergedSelectPG(seg.stages, from, alias)
+}
+
+// emitBreakpointDirectPG emits a breakpoint stage reading directly from the
+// CTE name, avoiding the redundant (SELECT * FROM _sN) wrapper.
+func (e *emitter) emitBreakpointDirectPG(st ir.Stage, from, alias string) (string, error) {
+	switch s := st.(type) {
+	case *ir.Aggregate:
+		selectParts := make([]string, 0, len(s.Keys)+len(s.Aggregates))
+		groupParts := make([]string, 0, len(s.Keys))
+		for i, k := range s.Keys {
+			ex, err := e.emitExpr(k.Expr, alias)
+			if err != nil {
+				return "", err
+			}
+			an := k.Name
+			if an == "" {
+				if col, ok := k.Expr.(*ir.Col); ok && col.Name != "" {
+					an = col.Name
+				} else {
+					an = fmt.Sprintf("key%d", i)
+				}
+			}
+			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", ex, quoteIdent(an)))
+			groupParts = append(groupParts, ex)
+		}
+		for i, a := range s.Aggregates {
+			ex, err := e.emitExpr(a.Expr, alias)
+			if err != nil {
+				return "", err
+			}
+			an := a.Name
+			if an == "" {
+				an = fmt.Sprintf("agg%d", i)
+			}
+			selectParts = append(selectParts, fmt.Sprintf("%s AS %s", ex, quoteIdent(an)))
+		}
+		sql := fmt.Sprintf("SELECT %s FROM %s AS %s", strings.Join(selectParts, ", "), from, alias)
+		if len(groupParts) > 0 {
+			sql += " GROUP BY " + strings.Join(groupParts, ", ")
+		}
+		return sql, nil
+	case *ir.Distinct:
+		cols := make([]string, 0, len(s.Cols))
+		for _, c := range s.Cols {
+			ex, err := e.emitExpr(c, alias)
+			if err != nil {
+				return "", err
+			}
+			cols = append(cols, ex)
+		}
+		if len(cols) == 0 {
+			cols = []string{alias + ".*"}
+		}
+		return fmt.Sprintf("SELECT DISTINCT %s FROM %s AS %s", strings.Join(cols, ", "), from, alias), nil
+	case *ir.Union:
+		parts := []string{fmt.Sprintf("SELECT %s.* FROM %s AS %s", alias, from, alias)}
+		for _, in := range s.Inputs {
+			subSQL, err := e.emitPipelineCTE(in)
+			if err != nil {
+				subSQL, err = e.emitPipeline(in)
+				if err != nil {
+					return "", err
+				}
+			}
+			parts = append(parts, fmt.Sprintf("SELECT * FROM (%s)", subSQL))
+		}
+		return strings.Join(parts, " UNION "), nil
+	case *ir.Join:
+		if s.Right == nil {
+			return "", fmt.Errorf("join with no right side")
+		}
+		rightSQL, err := e.emitPipelineCTE(s.Right)
+		if err != nil {
+			rightSQL, err = e.emitPipeline(s.Right)
+			if err != nil {
+				return "", err
+			}
+		}
+		joinType := "INNER"
+		switch s.Kind {
+		case ir.JoinLeftOuter:
+			joinType = "LEFT"
+		case ir.JoinRightOuter:
+			joinType = "RIGHT"
+		case ir.JoinFullOuter:
+			joinType = "FULL"
+		}
+		rightAlias := alias + "_j"
+		onParts := make([]string, 0, len(s.On))
+		for _, c := range s.On {
+			ex, err := e.emitJoinOnExpr(c, alias, rightAlias)
+			if err != nil {
+				return "", err
+			}
+			onParts = append(onParts, ex)
+		}
+		on := "1=1"
+		if len(onParts) > 0 {
+			on = strings.Join(onParts, " AND ")
+		}
+		return fmt.Sprintf("SELECT %s.*, %s.* FROM %s AS %s %s JOIN (%s) AS %s ON %s",
+			alias, rightAlias, from, alias, joinType, rightSQL, rightAlias, on), nil
+	}
+	return e.emitStage(fmt.Sprintf("SELECT * FROM %s", from), st)
 }
 
 func (e *emitter) emitMergedSelectPG(stages []ir.Stage, from, alias string) (string, error) {

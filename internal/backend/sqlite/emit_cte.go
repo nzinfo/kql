@@ -138,17 +138,134 @@ func (e *emitter) emitPipelineCTE(pipe *ir.Pipeline) (string, error) {
 
 // emitSegment emits a single segment (group of stages) as one SELECT.
 // If the segment is a single breakpoint stage (aggregate/join/distinct/union),
-// it delegates to the stage-specific emitter. Otherwise it merges the
-// mergeable stages (Filter/Project/Extend/Sort/Limit) into one SELECT.
+// it delegates to the stage-specific emitter reading DIRECTLY from the CTE name
+// (no redundant SELECT * FROM wrapper). Otherwise it merges the mergeable
+// stages (Filter/Sort/Limit) into one SELECT.
 func (e *emitter) emitSegment(seg segment, from, alias string) (string, error) {
 	if len(seg.stages) == 1 && isBreakpoint(seg.stages[0]) {
-		// Breakpoint: delegate to the existing stage emitter (which wraps in a
-		// subquery). The `from` is the source/prev-CTE, alias is the CTE name.
-		inner := fmt.Sprintf("SELECT * FROM %s", from)
-		return e.emitStage(inner, seg.stages[0])
+		// Breakpoint: emit directly from the CTE name, no inner subquery wrap.
+		return e.emitBreakpointDirect(seg.stages[0], from, alias)
 	}
-	// Mergeable run: combine Filter/Extend/Project/Sort/Limit into one SELECT.
+	// Mergeable run: combine Filter/Sort/Limit into one SELECT.
 	return e.emitMergedSelect(seg.stages, from, alias)
+}
+
+// emitBreakpointDirect emits a breakpoint stage reading directly FROM the CTE
+// name (or source table), avoiding the redundant (SELECT * FROM _sN) wrapper.
+// alias is used as the FROM alias for column references.
+func (e *emitter) emitBreakpointDirect(st ir.Stage, from, alias string) (string, error) {
+	switch s := st.(type) {
+	case *ir.Aggregate:
+		return e.emitAggregateDirect(s, from, alias)
+	case *ir.Distinct:
+		cols := make([]string, 0, len(s.Cols))
+		for _, c := range s.Cols {
+			ex, err := e.emitExpr(c, alias)
+			if err != nil {
+				return "", err
+			}
+			cols = append(cols, ex)
+		}
+		if len(cols) == 0 {
+			cols = []string{alias + ".*"}
+		}
+		return fmt.Sprintf("SELECT DISTINCT %s FROM %s AS %s", strings.Join(cols, ", "), from, alias), nil
+	case *ir.Union:
+		parts := []string{fmt.Sprintf("SELECT %s.* FROM %s AS %s", alias, from, alias)}
+		for _, in := range s.Inputs {
+			subSQL, err := e.emitPipelineCTE(in)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, fmt.Sprintf("SELECT * FROM (%s)", subSQL))
+		}
+		return strings.Join(parts, " UNION "), nil
+	case *ir.Join:
+		return e.emitJoinDirect(s, from, alias)
+	}
+	// Fallback: wrap (shouldn't reach here for known breakpoints).
+	return e.emitStage(fmt.Sprintf("SELECT * FROM %s", from), st)
+}
+
+// emitAggregateDirect emits an Aggregate reading directly from the CTE name.
+func (e *emitter) emitAggregateDirect(s *ir.Aggregate, from, alias string) (string, error) {
+	selectParts := make([]string, 0, len(s.Keys)+len(s.Aggregates))
+	groupParts := make([]string, 0, len(s.Keys))
+	for i, k := range s.Keys {
+		ex, err := e.emitExpr(k.Expr, alias)
+		if err != nil {
+			return "", err
+		}
+		aliasName := k.Name
+		if aliasName == "" {
+			if col, ok := k.Expr.(*ir.Col); ok && col.Name != "" {
+				aliasName = col.Name
+			} else {
+				aliasName = fmt.Sprintf("key%d", i)
+			}
+		}
+		selectParts = append(selectParts, fmt.Sprintf("%s AS %s", ex, quoteIdent(aliasName)))
+		groupParts = append(groupParts, ex)
+	}
+	for i, a := range s.Aggregates {
+		ex, err := e.emitExpr(a.Expr, alias)
+		if err != nil {
+			return "", err
+		}
+		aliasName := a.Name
+		if aliasName == "" {
+			aliasName = fmt.Sprintf("agg%d", i)
+		}
+		selectParts = append(selectParts, fmt.Sprintf("%s AS %s", ex, quoteIdent(aliasName)))
+	}
+	if len(selectParts) == 0 {
+		return "", fmt.Errorf("summarize with no aggregates")
+	}
+	sql := fmt.Sprintf("SELECT %s FROM %s AS %s", strings.Join(selectParts, ", "), from, alias)
+	if len(groupParts) > 0 {
+		sql += " GROUP BY " + strings.Join(groupParts, ", ")
+	}
+	return sql, nil
+}
+
+// emitJoinDirect emits a Join reading directly from the CTE name on the left.
+func (e *emitter) emitJoinDirect(s *ir.Join, from, alias string) (string, error) {
+	if s.Right == nil {
+		return "", fmt.Errorf("join with no right side")
+	}
+	rightSQL, err := e.emitPipelineCTE(s.Right)
+	if err != nil {
+		// Fallback to old pipeline emit for complex sub-pipelines.
+		rightSQL, err = e.emitPipeline(s.Right)
+		if err != nil {
+			return "", err
+		}
+	}
+	joinType := "INNER"
+	switch s.Kind {
+	case ir.JoinLeftOuter:
+		joinType = "LEFT"
+	case ir.JoinRightOuter:
+		joinType = "RIGHT"
+	case ir.JoinFullOuter:
+		joinType = "FULL"
+	}
+	leftAlias := alias
+	rightAlias := alias + "_j"
+	onParts := make([]string, 0, len(s.On))
+	for _, c := range s.On {
+		ex, err := e.emitJoinOnExpr(c, leftAlias, rightAlias)
+		if err != nil {
+			return "", err
+		}
+		onParts = append(onParts, ex)
+	}
+	on := "1=1"
+	if len(onParts) > 0 {
+		on = strings.Join(onParts, " AND ")
+	}
+	return fmt.Sprintf("SELECT %s.*, %s.* FROM %s AS %s %s JOIN (%s) AS %s ON %s",
+		leftAlias, rightAlias, from, leftAlias, joinType, rightSQL, rightAlias, on), nil
 }
 
 // emitMergedSelect combines a run of mergeable stages into a single SELECT.
