@@ -169,6 +169,54 @@ func TestPg_BinderUnknownColumn(t *testing.T) {
 	}
 }
 
+// TestPg_IffIntegerBranches: iff(cond, 1, 0) executes on pg (was broken — pg
+// couldn't encode int64 into the CASE result it typed as text). Regression guard.
+func TestPg_IffIntegerBranches(t *testing.T) {
+	dsn := pgDSN()
+	if dsn == "" {
+		t.Skip("set KQL_PG_DSN")
+	}
+	res := pgRun(t, dsn, `events | extend big = iff(damage > 5000, 1, 0) | sort by damage desc | take 2`)
+	if len(res.Rows()) != 2 {
+		t.Fatalf("rows = %d, want 2", len(res.Rows()))
+	}
+	// FLORIDA (9000) → 1, TEXAS (3200.5) → 0
+	if got := int64Val(res.Rows()[0][4]); got != 1 {
+		t.Errorf("FLORIDA iff = %d, want 1", got)
+	}
+	if got := int64Val(res.Rows()[1][4]); got != 0 {
+		t.Errorf("TEXAS iff = %d, want 0", got)
+	}
+}
+
+// TestPg_IffStringBranches: iff with string branches works via $N parameters.
+func TestPg_IffStringBranches(t *testing.T) {
+	dsn := pgDSN()
+	if dsn == "" {
+		t.Skip("set KQL_PG_DSN")
+	}
+	res := pgRun(t, dsn, `events | extend label = iff(damage > 5000, "big", "small") | take 1`)
+	if len(res.Rows()) != 1 {
+		t.Fatalf("rows = %d, want 1", len(res.Rows()))
+	}
+	if got, _ := res.Rows()[0][4].(string); got != "small" {
+		t.Errorf("label = %q, want small", got)
+	}
+}
+
+// int64Val coerces a pg-returned integer-ish cell.
+func int64Val(v interface{}) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	case float64:
+		return int64(x)
+	}
+	return 0
+}
+
 // stringVal / floatVal coerce pg-returned cell values.
 func stringVal(v interface{}) string {
 	switch x := v.(type) {

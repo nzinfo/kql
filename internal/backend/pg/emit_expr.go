@@ -75,7 +75,50 @@ func (e *emitter) emitLit(n *ir.Lit) (string, error) {
 	if !n.HasValue {
 		return "NULL", nil
 	}
+	// Integers and booleans are emitted INLINE (not as $N parameters) so pg can
+	// infer their type from the literal itself. This fixes iff/CASE branches:
+	// `CASE WHEN ... THEN $1 ELSE $2 END` with bound int64s makes pg default the
+	// result to text (OID 25), then fail encoding int64→text. With inline
+	// `1`/`0`, pg infers integer. No injection risk (these are numeric/bool,
+	// not user strings); strings still go through $N.
+	switch v := n.Value.(type) {
+	case int64:
+		return formatInt64Lit(v), nil
+	case bool:
+		if v {
+			return "TRUE", nil
+		}
+		return "FALSE", nil
+	case float64:
+		// floats are safe inline too; use $N to preserve exact precision, but cast.
+		s := e.bind(n.Value)
+		return s + "::float8", nil
+	}
 	return e.bind(n.Value), nil
+}
+
+// formatInt64Lit renders an int64 as a SQL integer literal (no sign issues for
+// the common positive case; min-int64 handled by the explicit minus).
+func formatInt64Lit(v int64) string {
+	if v == 0 {
+		return "0"
+	}
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	var buf [20]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 func (e *emitter) emitBinOp(n *ir.BinOp, alias string) (string, error) {

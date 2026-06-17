@@ -89,3 +89,15 @@ case-folding 是**已知限制**（测试用存储后的小写名绕过）。真
 `unable to encode 1 into text format (OID 25)`。pg 从 CASE 上下文推断结果列为 text，
 而绑定值是 int。需要给 THEN/ELSE 加显式类型转换或让 binder 给字面量类型信息。
 暂记为 follow-up（COUNT/SUM/where 等主路径都正常）。
+
+### 5.4 iff/CASE int 分支的 pg 编码错（已修）⚠️✅
+`iff(damage > 2000, 1, 0)` → `CASE WHEN ... THEN $1 ELSE $2 END`，pgx 报
+`unable to encode 1 into text format (OID 25)`。根因：pg 从 CASE 上下文推断结果类型，
+当 THEN/ELSE 是 `$N` 绑定参数时 pg 无法推断，默认 text(OID 25)，再编码 int64 失败。
+
+**修**：pg 的 `emitLit` 把 **int64/bool 字面量内联进 SQL**（`1`/`0`/`TRUE`，不走 $N），
+让 pg 从字面量本身推断类型。string 仍走 $N（防注入）。float 走 $N + `::float8` cast。
+无注入风险（数值/布尔非用户可控字符串）。
+
+**验收**：`TestPg_IffIntegerBranches`（iff(damage>5000,1,0) → FLORIDA=1, 其他=0）+
+`TestPg_IffStringBranches`（字符串分支仍走 $N）全绿。
