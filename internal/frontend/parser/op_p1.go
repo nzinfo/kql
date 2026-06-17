@@ -16,6 +16,11 @@ func (p *Parser) parseMvExpandOp(pipePos token.Pos) *ast.MvExpandOp {
 	p.next() // consume mv-expand
 	_ = p.parseOperatorParams()
 	cols := p.parseNamedExprList()
+	// optional `to typeof(T)` per column (g4 mvapplyOperatorExpressionToClause)
+	for p.cur == token.TO {
+		p.next()
+		_ = p.ParseExpr() // typeof(double) etc. — skip
+	}
 	// optional `limit N`
 	var limit ast.Expr
 	if p.cur == token.LIMIT {

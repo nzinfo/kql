@@ -129,6 +129,13 @@ func (l *Lexer) scanOperator(pos token.Pos) Token {
 			return Token{Type: token.GEQ, Pos: pos, Lit: ">="}
 		}
 		return Token{Type: token.GTR, Pos: pos, Lit: ">"}
+	case '\\':
+		// Lenient: a stray backslash (often from JSON-escaped quotes in corpus
+		// files, e.g. `\"Success\"`) is skipped as noise rather than fatal. Real
+		// KQL doesn't use bare backslashes; this just lets malformed-but-real
+		// queries parse past them.
+		l.next()
+		return l.Scan() // re-dispatch on the next char
 	default:
 		l.error(l.offset-1, fmt.Sprintf("unexpected character %q", ch))
 		return Token{Type: token.ILLEGAL, Pos: pos, Lit: string(ch)}

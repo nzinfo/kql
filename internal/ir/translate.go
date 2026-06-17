@@ -96,6 +96,24 @@ func (t *translator) translateSource(e ast.Expr) Source {
 			return sub.Source
 		}
 		return sub.Source // best-effort; complex sub-pipelines handled at Join
+	case *ast.IndexExpr:
+		// datatable(Schema)[data] / externaldata(Schema)[storage] — a source
+		// form whose data literal we don't yet materialise. Surface as a
+		// placeholder SourceTable tagged with the call name so downstream
+		// stages parse; real materialisation comes with the source-form work.
+		if call, ok := n.X.(*ast.CallExpr); ok {
+			if id, ok := call.Fun.(*ast.Ident); ok {
+				return &SourceTable{Position: n.Pos(), Table: id.Name}
+			}
+		}
+		return &SourceTable{Position: n.Pos()}
+	case *ast.CallExpr:
+		// A bare call as a source (e.g. `union isfuzzy=true (...)` as a
+		// function-form source, or print/range). Surface as a placeholder.
+		if id, ok := n.Fun.(*ast.Ident); ok {
+			return &SourceTable{Position: n.Pos(), Table: id.Name}
+		}
+		return &SourceTable{Position: n.Pos()}
 	}
 	t.errorf(e.Pos(), "KQL010: unsupported pipeline source %T", e)
 	return &SourceTable{Position: e.Pos()}

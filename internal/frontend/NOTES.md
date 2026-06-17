@@ -266,13 +266,16 @@ parse 的 regex 抽取）留到各后端线 + NeedsPostProc 标记时实现。
   sample-distinct / reduce 用 `parsePassthroughOp` 捕获算子名 + 跳过到下一 stage 边界
   （平衡括号），translate 成 passthrough。
 
-**剩余 6 个 parse 失败（真复杂 P2，下一轮）**：
-- **函数式 lambda `let f = (x:int) {...}`**（22）：`(params) {body}` 语法 + `:` 类型注解。
-- **`datatable(name:type, ...)` 作为 source**（89）：schema 带 `:` 类型。
-- **`union isfuzzy=true (subq)` 作为函数式 source**（02）：union 既算子又函数调用。
-- **`\` 字符**（54）：verbatim 串里的反斜杠边界（lexer edge）。
-- **`| externaldata` storage 子句**（72）：`(`schema`)` 后的 `[StorageAccounts=...]`。
-- 这些都需要更深的 grammar 分支（lambda 体、datatable 求值、union 双重身份）。
+**P2 复杂构造已落地（93%→99%）**：剩 1 个失败。
+- ✅ **函数式 lambda `let f = (x:int) { body }`**（22）：parseLetStmt 检测 `(params){` 形，
+  解析参数（跳 `:type`）+ `{ body }`（单表达式体）。
+- ✅ **`datatable(Name:type,...)[data]` 作为 source**（89）：parseArgument 跳 `:type`；
+  parsePostfix 的 `X[a,b,c,...]` 逗号列表→ListExpr；translateSource 处理 IndexExpr/CallExpr 源。
+- ✅ **`externaldata(col:type,...)[storage] with(...)`**（72）：同上 `:type` 跳过 + source 翻译。
+- ✅ **`mv-expand ... to typeof(double)`**（11）：parseMvExpandOp 跳 `to <type>` 子句。
+- ✅ **`\` 字符**（54）：lexer 对游离 `\`（JSON 转义残留）宽容跳过，不 fatal。
+- ⏳ **`union isfuzzy=true (...)` 函数式 source**（02）：union 既算子又函数调用，唯一剩余失败。
+  需特殊 grammar 分支（union-as-function），留下一轮。
 
 ## 7. builtin 函数表（F7）
 

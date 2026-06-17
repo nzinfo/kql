@@ -158,6 +158,8 @@ func (p *Parser) parseArgument() ast.Expr {
 		return &ast.NamedExpr{Expr: pipe}
 	}
 	// Named argument?  IDENT '=' expr   (lookahead without committing)
+	// Also handles schema args with type annotations: `Name:string` (datatable/
+	// externaldata) — the `:type` is skipped, leaving the IDENT as the arg.
 	if p.cur == token.IDENT {
 		s := p.save()
 		name := p.parseIdentLike()
@@ -167,7 +169,13 @@ func (p *Parser) parseArgument() ast.Expr {
 			val := p.ParseExpr()
 			return &ast.NamedExpr{Name: name, Assign: assign, Expr: val}
 		}
-		p.restore(s) // not a named arg; fall through
+		if p.cur == token.COLON {
+			// Type annotation: `Name : Type` — skip the type, return the name.
+			p.next()
+			_ = p.parseIdentLike() // type (skip)
+			return name
+		}
+		p.restore(s) // not a named/typed arg; fall through
 	}
 	return &ast.NamedExpr{Expr: p.ParseExpr()}
 }

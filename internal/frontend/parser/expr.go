@@ -223,9 +223,20 @@ func (p *Parser) parsePostfix() ast.Expr {
 		case token.LBRACKET:
 			lbr := p.pos
 			p.next()
-			idx := p.ParseExpr()
-			rbr := p.expect(token.RBRACKET)
-			expr = &ast.IndexExpr{X: expr, Lbracket: lbr, Index: idx, Rbracket: rbr}
+			first := p.ParseExpr()
+			// `X[a, b, c, ...]` — a comma-list in brackets (datatable data,
+			// dynamic arrays). Treat as an Index whose Index is a ListExpr.
+			if p.cur == token.COMMA {
+				elems := []ast.Expr{first}
+				for p.accept(token.COMMA) {
+					elems = append(elems, p.ParseExpr())
+				}
+				rbr := p.expect(token.RBRACKET)
+				expr = &ast.IndexExpr{X: expr, Lbracket: lbr, Index: &ast.ListExpr{Lparen: lbr, Elems: elems, Rparen: rbr}, Rbracket: rbr}
+			} else {
+				rbr := p.expect(token.RBRACKET)
+				expr = &ast.IndexExpr{X: expr, Lbracket: lbr, Index: first, Rbracket: rbr}
+			}
 		default:
 			return expr
 		}
