@@ -25,8 +25,32 @@ import (
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/parser"
 	"nzinfo/kql/internal/ir"
+	"nzinfo/kql/internal/optimizer/decision"
 	"nzinfo/kql/internal/optimizer/rules"
 )
+
+// Policy names the optimizer decision strategy for ExecWithPolicy/Explain.
+// Maps to the O3 DecisionPolicy implementations.
+type Policy string
+
+const (
+	PolicyConservative Policy = "conservative" // default: don't reorder with weak stats
+	PolicyAggressive   Policy = "aggressive"   // always lowest estimated cost
+	PolicyGated        Policy = "gated"        // aggressive when confidence high, else conservative
+)
+
+// policyFor builds the O3 DecisionPolicy for a name (used by Explain; Exec path
+// runs only the always-safe O2 rules by default, so this is opt-in).
+func policyFor(p Policy, catalog interface{}) decision.DecisionPolicy {
+	switch p {
+	case PolicyAggressive:
+		return decision.Aggressive{}
+	case PolicyGated:
+		// ConfidenceGated needs a catalog; nil → always conservative fallback.
+		return decision.ConfidenceGated{}
+	}
+	return decision.Conservative{}
+}
 
 // Exec runs a KQL query against the database at dsn and returns the result.
 // The backend is selected by dsn scheme: `postgres://`/`postgresql://` (or a
@@ -49,6 +73,62 @@ func Exec(ctx context.Context, dsn, query string) (*Result, error) {
 // Exported as OpenBackend so the CLI's explain path can emit dialect-correct
 // SQL without re-implementing routing.
 func OpenBackend(dsn string) (backend.Backend, error) { return openBackend(dsn) }
+
+// ExplainOutput is the public result of Explain: emitted SQL + the optimizer's
+// decision log. Returned by Explain for `kql explain` to render.
+type ExplainOutput struct {
+	SQL         string
+	Args        []interface{}
+	Dialect     backend.Dialect
+	Decisions   []string // human-readable decision reasons
+	RuleChanges int
+}
+
+// Explain parses + binds + optimises a query and returns the emitted SQL plus
+// the optimizer's decision log, WITHOUT executing. policyName selects the O3
+// strategy (conservative/aggressive/gated); pass "" for rules-only (no
+// cost-based decision). This is what `kql explain` calls.
+func Explain(ctx context.Context, dsn, query string, policyName Policy) (*ExplainOutput, error) {
+	bk, err := openBackend(dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer bk.Close()
+	pipe, err := ParseTranslate(query)
+	if err != nil {
+		return nil, err
+	}
+	// Bind (resolve column refs; rewrite Col.Name to physical names).
+	var diags diagnostic.List
+	if prov, ok := bk.(binderProvider); ok {
+		if _, berr := binder.Bind(pipe, prov, &diags); berr != nil {
+			return nil, fmt.Errorf("bind: %w", berr)
+		}
+		if diags.HasErrors() {
+			return nil, &Error{diags: diags, stage: "bind"}
+		}
+	}
+	// O2 rules (always-safe rewrites) → fixpoint.
+	ruleEngine := rules.NewEngine(rules.ConstantFold{}, rules.PredicatePushdown{}, rules.ColumnPrune{})
+	_, ruleChanges := ruleEngine.Optimize(pipe)
+	// O3 cost-based decision (opt-in via policyName).
+	var decisions []string
+	if policyName != "" {
+		po := decision.PredicateOrder{Policy: policyFor(policyName, nil)}
+		_, _, d := po.Apply(pipe)
+		if d.Choice != "" {
+			decisions = append(decisions, "["+d.PolicyName+"] "+d.Choice+": "+d.Reason)
+		}
+	}
+	q, err := bk.Emit(pipe)
+	if err != nil {
+		return nil, fmt.Errorf("emit: %w", err)
+	}
+	return &ExplainOutput{
+		SQL: q.SQL, Args: q.Args, Dialect: bk.Dialect(),
+		Decisions: decisions, RuleChanges: ruleChanges,
+	}, nil
+}
 
 func openBackend(dsn string) (backend.Backend, error) {
 	if isPgDSN(dsn) {

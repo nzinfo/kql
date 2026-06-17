@@ -70,21 +70,21 @@ func run(args []string) error {
 	}
 
 	if subIdx >= 0 {
-		// Extract the -d/-o flags from before the subcommand, the rest after.
+		// Extract the -d/-o/-p flags from before the subcommand, the rest after.
 		dsn := flagStr(args[:subIdx], "d", "")
+		policy := flagStr(args[:subIdx], "policy", "")
 		switch args[subIdx] {
 		case "explain":
-			return runExplain(dsn, args[subIdx+1:])
+			return runExplain(dsn, policy, args[subIdx+1:])
 		case "validate":
 			return runValidate(args[subIdx+1:])
 		}
 	}
-
-	// Default: run a query.
 	fs := flag.NewFlagSet("kql", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dsn := fs.String("d", "", "data source (sqlite dsn, e.g. :memory: or a .db path)")
 	format := fs.String("o", "csv", "output format: csv | json | table")
+	_ = fs.String("policy", "conservative", "optimizer decision policy: conservative | aggressive | gated (affects explain only)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -122,10 +122,11 @@ func runQuery(ctx context.Context, dsn, format, query string) error {
 	return printResult(os.Stdout, res, format)
 }
 
-// runExplain parses and translates a query, then prints the IR and the emitted
-// SQL WITHOUT executing it. Useful for debugging translation. dsn is optional
-// (when provided, the backend SQL is emitted; otherwise only the IR).
-func runExplain(dsn string, args []string) error {
+// runExplain parses, binds, and optimises a query, then prints the IR, the
+// emitted SQL, and the optimizer's decision log — WITHOUT executing. policy is
+// the O3 strategy name ("" → rules-only, no cost-based decision). args is the
+// slice after "explain" (the query + any explain-local flags).
+func runExplain(dsn, policy string, args []string) error {
 	fs := flag.NewFlagSet("kql explain", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
@@ -137,28 +138,37 @@ func runExplain(dsn string, args []string) error {
 	}
 	query := strings.Join(rest, " ")
 
+	// Show the IR (parse+translate only, pre-optimisation) for reference.
 	pipe, err := kql.ParseTranslate(query)
 	if err != nil {
 		return err
 	}
-	fmt.Println("# IR Pipeline")
+	fmt.Println("# IR Pipeline (pre-optimisation)")
 	printIR(os.Stdout, pipe)
 	fmt.Println()
 
-	if dsn != "" {
-		bk, err := kql.OpenBackend(dsn)
-		if err != nil {
-			return err
-		}
-		defer bk.Close()
-		q, err := bk.Emit(pipe)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("# Emitted SQL (%s)\n", bk.Dialect())
-		fmt.Println(q.SQL)
-		if len(q.Args) > 0 {
-			fmt.Printf("\n# Bind args: %v\n", q.Args)
+	if dsn == "" {
+		fmt.Println("# (no -d <dsn>: skipping bind/optimise/emit)")
+		return nil
+	}
+
+	policyName := kql.Policy("")
+	if policy != "" {
+		policyName = kql.Policy(policy)
+	}
+	out, err := kql.Explain(context.Background(), dsn, query, policyName)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("# Optimised SQL (%s), %d rule rewrites\n", out.Dialect, out.RuleChanges)
+	fmt.Println(out.SQL)
+	if len(out.Args) > 0 {
+		fmt.Printf("\n# Bind args: %v\n", out.Args)
+	}
+	if len(out.Decisions) > 0 {
+		fmt.Println("\n# Optimizer decisions")
+		for _, d := range out.Decisions {
+			fmt.Println("  " + d)
 		}
 	}
 	return nil

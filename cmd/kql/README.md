@@ -19,15 +19,16 @@ go build -o kql ./cmd/kql
 kql — KQL query tool (prototype; sqlite backend)
 
 Usage:
-  kql -d <dsn> '<query>'            Run a query, print rows (default: csv)
-  kql -d <dsn> -o json '<query>'    Run, print as JSON
-  kql -d <dsn> explain '<query>'    Parse+translate, print IR + SQL (no exec)
-  kql validate '<query>'            Parse only, print diagnostics
-  kql -h | --help                   This help
+  kql -d <dsn> '<query>'                            Run a query, print rows (default: csv)
+  kql -d <dsn> -o json '<query>'                    Run, print as JSON
+  kql -d <dsn> [--policy <p>] explain '<query>'    Parse+optimise, print IR + SQL + decision log (no exec)
+  kql validate '<query>'                            Parse only, print diagnostics
+  kql -h | --help                                   This help
 
 Options:
-  -d <dsn>     Data source (sqlite dsn: :memory:, file:path.db, or a .db path)
-  -o <format>  Output format: csv (default) | json | table
+  -d <dsn>       Data source (sqlite dsn: :memory:, file:path.db, or a .db path; postgres://... for pg)
+  -o <format>    Output format: csv (default) | json | table
+  --policy <p>   Optimizer decision policy for explain: conservative (default) | aggressive | gated
 ```
 
 ## Examples
