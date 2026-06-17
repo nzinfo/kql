@@ -177,3 +177,26 @@ Gated 高置信走 Aggressive/低置信走 Conservative、三策略同 IR reason
 
 **不在范围**（下一轮）：O3.S1/S2 AltPlan/PhysicalPlanner（真正的多物理方案枚举：HashJoin vs
 NestedLoop vs IndexedLookup）—— 当前 PredicateOrder 是单决策点，PhysicalPlanner 是系统化枚举框架。
+
+## 9. O5 — 代价基准 + --stats 接线
+
+**--stats CLI flag**：`kql explain --stats <path> --policy gated` 加载 O0 YAML catalog
+→ `cost.Estimator` → 喂给 `PredicateOrder`/gated policy。完整闭环 O0→O1→O3 现在用户可见：
+统计加载 → 置信度判断（high，因 catalog 全字段）→ 选择率估算（state MCV 0.08 < damage range 0.33）
+→ 谓词重排（state 先）→ emit 优化后 SQL + 决策日志。
+
+实测：`events | where damage > 1000 and state == "TEXAS"` 从 `damage AND state`
+重排为 `state AND damage`（更选择性的先短路），explain 显示
+`[ConfidenceGated] PredicateOrder: high confidence → ...`。
+
+**pkg/kql.Explain** 新签名加 `statsPath`；`policyFor` 接受 `*stats.Catalog`
+（gated 用它判置信度）；PredicateOrder 用真 `cost.Estimator`（非 nilEstimator）。
+示例 catalog 在 `pkg/kql/testdata/stats/events.yaml`。
+
+**O5 基准**（`pkg/kql/opt_bench_test.go`）：
+- BenchmarkOptimize（O2 三规则到不动点 + O3）：**~3.9µs/op, 101 allocs**
+- BenchmarkParseTranslate（baseline）：~4.7µs/op, 100 allocs
+- **优化器开销 < parse 的 1µs** —— 健康（优化器远比 parse/emit/exec 便宜）。
+
+**关键 bug 修**：`flagStr` 之前只认单横杠 `-stats`，`--stats`（双横杠）不识别 →
+catalog 没加载 → gated 退化为保守。现在 `-`/`--` 都认。

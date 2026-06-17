@@ -25,8 +25,10 @@ import (
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/parser"
 	"nzinfo/kql/internal/ir"
+	"nzinfo/kql/internal/optimizer/cost"
 	"nzinfo/kql/internal/optimizer/decision"
 	"nzinfo/kql/internal/optimizer/rules"
+	"nzinfo/kql/internal/optimizer/stats"
 )
 
 // Policy names the optimizer decision strategy for ExecWithPolicy/Explain.
@@ -40,14 +42,14 @@ const (
 )
 
 // policyFor builds the O3 DecisionPolicy for a name (used by Explain; Exec path
-// runs only the always-safe O2 rules by default, so this is opt-in).
-func policyFor(p Policy, catalog interface{}) decision.DecisionPolicy {
+// runs only the always-safe O2 rules by default, so this is opt-in). catalog is
+// optional (needed for ConfidenceGated to evaluate confidence; nil → conservative).
+func policyFor(p Policy, catalog *stats.Catalog) decision.DecisionPolicy {
 	switch p {
 	case PolicyAggressive:
 		return decision.Aggressive{}
 	case PolicyGated:
-		// ConfidenceGated needs a catalog; nil → always conservative fallback.
-		return decision.ConfidenceGated{}
+		return decision.ConfidenceGated{Catalog: catalog}
 	}
 	return decision.Conservative{}
 }
@@ -87,8 +89,10 @@ type ExplainOutput struct {
 // Explain parses + binds + optimises a query and returns the emitted SQL plus
 // the optimizer's decision log, WITHOUT executing. policyName selects the O3
 // strategy (conservative/aggressive/gated); pass "" for rules-only (no
-// cost-based decision). This is what `kql explain` calls.
-func Explain(ctx context.Context, dsn, query string, policyName Policy) (*ExplainOutput, error) {
+// cost-based decision). statsPath optionally loads an O0 stats YAML catalog to
+// drive selectivity-aware decisions (pass "" for no catalog → uniform/default
+// selectivity). This is what `kql explain --stats <path>` calls.
+func Explain(ctx context.Context, dsn, query string, policyName Policy, statsPath string) (*ExplainOutput, error) {
 	bk, err := openBackend(dsn)
 	if err != nil {
 		return nil, err
@@ -108,13 +112,27 @@ func Explain(ctx context.Context, dsn, query string, policyName Policy) (*Explai
 			return nil, &Error{diags: diags, stage: "bind"}
 		}
 	}
+	// Optionally load the stats catalog for selectivity-aware decisions.
+	var catalog *stats.Catalog
+	if statsPath != "" {
+		c, _, err := stats.Load(statsPath)
+		if err != nil {
+			return nil, fmt.Errorf("load stats %q: %w", statsPath, err)
+		}
+		catalog = c
+	}
 	// O2 rules (always-safe rewrites) → fixpoint.
 	ruleEngine := rules.NewEngine(rules.ConstantFold{}, rules.PredicatePushdown{}, rules.ColumnPrune{})
 	_, ruleChanges := ruleEngine.Optimize(pipe)
 	// O3 cost-based decision (opt-in via policyName).
 	var decisions []string
 	if policyName != "" {
-		po := decision.PredicateOrder{Policy: policyFor(policyName, nil)}
+		est := cost.NewEstimator(catalog)
+		po := decision.PredicateOrder{Policy: policyFor(policyName, catalog), Estimator: est}
+		// Determine the source table for selectivity lookups.
+		if src, ok := pipe.Source.(*ir.SourceTable); ok {
+			po.Table = src.Table
+		}
 		_, _, d := po.Apply(pipe)
 		if d.Choice != "" {
 			decisions = append(decisions, "["+d.PolicyName+"] "+d.Choice+": "+d.Reason)

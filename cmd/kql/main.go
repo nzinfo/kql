@@ -48,8 +48,10 @@ func run(args []string) error {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "-d" || a == "-o":
+		case a == "-d" || a == "-o" || a == "--d" || a == "--o":
 			i++ // skip the flag's value too
+		case a == "-policy" || a == "-stats" || a == "--policy" || a == "--stats":
+			i++ // skip these flags' values too
 		case a == "explain" || a == "validate":
 			subIdx = i
 		case a == "-h" || a == "--help" || a == "help":
@@ -73,9 +75,10 @@ func run(args []string) error {
 		// Extract the -d/-o/-p flags from before the subcommand, the rest after.
 		dsn := flagStr(args[:subIdx], "d", "")
 		policy := flagStr(args[:subIdx], "policy", "")
+		statsPath := flagStr(args[:subIdx], "stats", "")
 		switch args[subIdx] {
 		case "explain":
-			return runExplain(dsn, policy, args[subIdx+1:])
+			return runExplain(dsn, policy, statsPath, args[subIdx+1:])
 		case "validate":
 			return runValidate(args[subIdx+1:])
 		}
@@ -102,10 +105,14 @@ func run(args []string) error {
 // flagStr scans args for a -name <value> pair (name without leading "-") and
 // returns its value (or def if absent). Used to pull global flags out before a
 // subcommand without invoking flag.Parse on a mixed slice.
+// flagStr scans args for a -name/--name <value> pair (single or double dash)
+// and returns its value (or def if absent). Used to pull global flags out
+// before a subcommand without invoking flag.Parse on a mixed slice.
 func flagStr(args []string, name, def string) string {
-	flag := "-" + name
+	single := "-" + name
+	double := "--" + name
 	for i := 0; i < len(args); i++ {
-		if args[i] == flag && i+1 < len(args) {
+		if (args[i] == single || args[i] == double) && i+1 < len(args) {
 			return args[i+1]
 		}
 	}
@@ -124,9 +131,9 @@ func runQuery(ctx context.Context, dsn, format, query string) error {
 
 // runExplain parses, binds, and optimises a query, then prints the IR, the
 // emitted SQL, and the optimizer's decision log — WITHOUT executing. policy is
-// the O3 strategy name ("" → rules-only, no cost-based decision). args is the
-// slice after "explain" (the query + any explain-local flags).
-func runExplain(dsn, policy string, args []string) error {
+// the O3 strategy name ("" → rules-only). statsPath optionally loads an O0
+// catalog YAML for selectivity-aware decisions. args is after "explain".
+func runExplain(dsn, policy, statsPath string, args []string) error {
 	fs := flag.NewFlagSet("kql explain", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
@@ -156,7 +163,7 @@ func runExplain(dsn, policy string, args []string) error {
 	if policy != "" {
 		policyName = kql.Policy(policy)
 	}
-	out, err := kql.Explain(context.Background(), dsn, query, policyName)
+	out, err := kql.Explain(context.Background(), dsn, query, policyName, statsPath)
 	if err != nil {
 		return err
 	}

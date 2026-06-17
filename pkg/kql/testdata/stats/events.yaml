@@ -1,0 +1,39 @@
+version: "1"
+source: pg_analyze
+schema: public
+tables:
+  events:
+    row_count: 1000000
+    avg_row_bytes: 80
+    columns:
+      id:
+        card: 1000000
+        nulls: 0
+        type: long
+        hist:
+          kind: equi_freq
+          bounds: ["0", "250000", "500000", "750000", "1000000"]
+      state:
+        card: 62
+        nulls: 0
+        type: string
+        mcv:
+          values: ["TEXAS", "FLORIDA"]
+          frequencies: [0.08, 0.04]
+        hist:
+          kind: equi_freq
+          bounds: ["AL", "FL", "TX", "WY"]
+      damage:
+        card: 50000
+        nulls: 0
+        type: real
+        hist:
+          kind: equi_freq
+          bounds: ["0", "1000", "10000"]
+      eventtype:
+        card: 48
+        nulls: 0
+        type: string
+        mcv:
+          values: ["Hail", "Wind"]
+          frequencies: [0.3, 0.2]
