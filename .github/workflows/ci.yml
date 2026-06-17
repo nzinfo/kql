@@ -126,6 +126,12 @@ jobs:
       - name: Run pg e2e suite
         run: go test -count=1 ./pkg/kql/ -run TestPg_ -v
 
+      - name: Run O4 hint graceful-degrade on stock pg
+        # Verifies join hints execute correctly WITHOUT pg_hint_plan installed
+        # (the production-safety property). The postgres:16 service container
+        # does not include the extension.
+        run: go test -count=1 ./internal/backend/pg/ -run TestE2E_O4_ -v
+
       - name: Run cross-backend equivalence (sqlite+duckdb+pg)
         # equiv_test.go picks up KQL_PG_DSN automatically when set, adding pg
         # to the backend set under test.
