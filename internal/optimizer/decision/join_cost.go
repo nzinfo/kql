@@ -187,19 +187,15 @@ func indexLookupCost(in *joinCostInput) cost.Cost {
 	}
 }
 
-// defaultJoinCost: the "let the backend planner decide" baseline. Costed as the
-// estimated output work (a neutral floor) so Conservative can pick it when no
-// candidate is clearly dominant. It is NOT a specific method — it defers the
-// choice to pg/sqlite/duckdb's own planner.
+// defaultJoinCost: the "let the backend planner decide" baseline. It represents
+// what pg's own planner would most likely pick — for an equi-join on non-tiny
+// tables that's a hash join (pg's default). So Default costs the same as Hash.
+// This makes the policy comparison meaningful: "is our explicit hint better than
+// what pg would do anyway?" When Default ties Hash, Conservative picks Default
+// (defers — never overrides pg on a marginal call). Aggressive can still pick a
+// different method (NestLoop/IndexLookup) when it's genuinely cheaper.
 func defaultJoinCost(in *joinCostInput) cost.Cost {
-	out := in.outCard
-	if out <= 0 {
-		out = in.leftCard + in.rightCard
-	}
-	return cost.Cost{
-		IO:  (pages(in.leftCard, in.leftBytes) + pages(in.rightCard, in.rightBytes)) * in.seqPageCost(),
-		CPU: float64(out) * in.cpuTupleCost(),
-	}
+	return hashJoinCost(in) // pg's likely default for equi-joins
 }
 
 // describeJoin builds a one-line summary for Explain, shared by all plans.

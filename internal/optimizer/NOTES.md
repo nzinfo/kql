@@ -200,3 +200,36 @@ NestedLoop vs IndexedLookup）—— 当前 PredicateOrder 是单决策点，Phy
 
 **关键 bug 修**：`flagStr` 之前只认单横杠 `-stats`，`--stats`（双横杠）不识别 →
 catalog 没加载 → gated 退化为保守。现在 `-`/`--` 都认。
+
+
+## 10. O4 — Join 物理方案枚举（cost-based join-method selection）
+
+**状态：✅ 核心落地（Hash/NestLoop/Merge hint + IndexLookup cost；IndexLookup emit deferred）。**
+
+**架构（用户批准的设计）**：
+- 不建 `backend.PhysicalStep`（B1.S3 大改），而是在 `ir.Join` 上加 `Hint JoinHint` 字段。
+- 决策层 `decision.JoinPlan.Apply(pipe)` 枚举候选 + 代价 + policy 选择 → 写 `j.Hint`。
+- pg emit 读 `j.Hint` → 发 `/*+ HashJoin(_sN _sN_j) */` 注释（pg_hint_plan 扩展；
+  未装则静默忽略——graceful degrade）。sqlite/duckdb 无 join hint → 字段记 Explain 但不改 SQL。
+- `JoinHintNone`（零值）= "让后端 planner 决定" = 当前行为（无回归）。
+
+**决策策略 `ChooseJoinPlan`**（`DecisionPolicy` 新方法）：
+- **Conservative**：默认选 Default（让 pg 决定），除非某候选比 default 便宜 ≥10× 且 catalog 高置信。永不在边际情况下覆盖 pg。
+- **Aggressive**：总选 `argmin Cost.Total(weights)`，平手时偏向具体方法（非 Default）。信任估算器。
+- **ConfidenceGated**：catalog 高置信 → Aggressive；否则 Conservative。
+
+**代价组合器**（`decision/join_cost.go`，纯函数）：
+- **HashJoin**：build（inner × cpuTupleCost × 3×）+ probe（outer × cpuTupleCost）；Mem=hash 表。3× build 倍数是 NestLoop 在微表上能赢的原因。
+- **NestLoop**：O(outer×inner) CPU，但 inner < ~1000 页时 IO 近免费（cache residency）。仅在微表（<~30行）赢。
+- **MergeJoin**：单趟扫描，Mem=0；可行性门控于 corr_vs（有序键的代理）。
+- **IndexLookup**：outer × random_page_cost；仅当 inner 有 join-key 索引 + inner > 1000 行时枚举。**emit 延迟**（结构化 IN-list 改写是未来 PostProc 路径）。
+- **Default**：= HashJoin 代价（pg 对等连接的默认选择），使得 Conservative 的 "≥10× cheaper" 比较有意义。
+
+**已验证策略分歧**（O4.S5 验收）：
+- events(1M) × meta(5K indexed)：Aggressive→Hash hint；Conservative→None（defer）。
+- 小 outer(50) + 巨大 indexed inner(5M)：Aggressive→IndexLookup。
+- corr_vs 存在：Aggressive→Merge。
+
+**接线**：`pkg/kql/kql.go` 的 `Explain` 和 `ExecOptimized` 在 `PredicateOrder.Apply` 之后、有 catalog 时调 `JoinPlan.Apply`。无 catalog → no-op（ExecOn 路径不受影响）。
+
+**延迟（文档化）**：IndexLookup 结构化 emit（IN-list PostProc）、完整 `backend.PhysicalStep`（B1.S3）、多表 join 顺序枚举。

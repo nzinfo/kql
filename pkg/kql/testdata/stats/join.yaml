@@ -1,0 +1,41 @@
+# Stats catalog for O4 join-method integration tests.
+# Mirrors the testdata/pg-seed.sql schema: events (6 rows) + meta (3 rows),
+# with an index on meta.id so IndexLookup feasibility can be tested.
+# Card/row counts are inflated from the seed's 6/3 rows to exercise the
+# cost model meaningfully (the seed is too tiny to differentiate plans).
+version: "1"
+source: pg_analyze
+schema: public
+tables:
+  events:
+    row_count: 1000000
+    avg_row_bytes: 120
+    columns:
+      id:
+        card: 1000000
+        nulls: 0
+        type: long
+      state:
+        card: 62
+        nulls: 0
+        type: string
+      eventtype:
+        card: 20
+        nulls: 0
+        type: string
+  meta:
+    row_count: 5000
+    avg_row_bytes: 60
+    columns:
+      id:
+        card: 5000
+        nulls: 0
+        type: int
+      region:
+        card: 10
+        nulls: 0
+        type: string
+    indexes:
+      - name: meta_pk
+        columns: ["id"]
+        unique: true

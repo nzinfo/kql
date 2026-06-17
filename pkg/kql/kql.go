@@ -129,8 +129,9 @@ func Explain(ctx context.Context, dsn, query string, policyName Policy, statsPat
 	// O3 cost-based decision (opt-in via policyName).
 	var decisions []string
 	if policyName != "" {
+		pol := policyFor(policyName, catalog)
 		est := cost.NewEstimator(catalog)
-		po := decision.PredicateOrder{Policy: policyFor(policyName, catalog), Estimator: est}
+		po := decision.PredicateOrder{Policy: pol, Estimator: est}
 		// Determine the source table for selectivity lookups.
 		if src, ok := pipe.Source.(*ir.SourceTable); ok {
 			po.Table = src.Table
@@ -138,6 +139,18 @@ func Explain(ctx context.Context, dsn, query string, policyName Policy, statsPat
 		_, _, d := po.Apply(pipe)
 		if d.Choice != "" {
 			decisions = append(decisions, "["+d.PolicyName+"] "+d.Choice+": "+d.Reason)
+		}
+		// O4 join-method planning (needs a catalog to cost joins).
+		if catalog != nil {
+			jp := decision.JoinPlan{
+				Policy:  pol,
+				Catalog: catalog,
+				Weights: cost.DefaultWeights(bk.Dialect().String()),
+			}
+			_, _, jd := jp.Apply(pipe)
+			if jd.Choice != "" {
+				decisions = append(decisions, "["+jd.PolicyName+"] "+jd.Choice+": "+jd.Reason)
+			}
 		}
 	}
 	q, err := bk.Emit(pipe)
@@ -231,12 +244,22 @@ func ExecOptimized(ctx context.Context, bk backend.Backend, query string, opt Op
 	defaultEngine.Optimize(pipe)
 	// O3 cost-based decision (opt-in).
 	if opt.Policy != "" {
+		pol := policyFor(opt.Policy, catalog)
 		est := cost.NewEstimator(catalog)
-		po := decision.PredicateOrder{Policy: policyFor(opt.Policy, catalog), Estimator: est}
+		po := decision.PredicateOrder{Policy: pol, Estimator: est}
 		if src, ok := pipe.Source.(*ir.SourceTable); ok {
 			po.Table = src.Table
 		}
 		po.Apply(pipe)
+		// O4 join-method planning (needs a catalog to cost joins).
+		if catalog != nil {
+			jp := decision.JoinPlan{
+				Policy:  pol,
+				Catalog: catalog,
+				Weights: cost.DefaultWeights(bk.Dialect().String()),
+			}
+			jp.Apply(pipe)
+		}
 	}
 	// Execute with PostProc support.
 	er, err := exec.ExecPipeline(ctx, bk, pipe)

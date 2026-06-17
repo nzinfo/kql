@@ -150,6 +150,8 @@ func (Aggressive) OrderPredicates(table string, sels []float64) ([]int, Decision
 // ChooseJoinPlan (O4): Aggressive always picks the lowest-cost candidate
 // (argmin Cost.Total(weights)), even with weak stats. It trusts the estimator's
 // uniform-fallback estimates rather than deferring to the backend planner.
+// Ties break in favor of a CONCRETE method (non-Default) — when costs are equal,
+// an explicit hint documents the decision better than "let pg decide".
 func (Aggressive) ChooseJoinPlan(cands []AltPlan, w cost.CostWeights) (AltPlan, Decision) {
 	if len(cands) == 0 {
 		return nil, Decision{PolicyName: "Aggressive", Choice: "JoinPlan", Reason: "no candidates"}
@@ -158,7 +160,8 @@ func (Aggressive) ChooseJoinPlan(cands []AltPlan, w cost.CostWeights) (AltPlan, 
 	bestCost := best.Cost().Total(w)
 	for _, c := range cands[1:] {
 		cc := c.Cost().Total(w)
-		if cc < bestCost {
+		// Strictly cheaper → pick. Equal cost → prefer concrete (non-Default).
+		if cc < bestCost || (cc == bestCost && best.Kind() == ir.JoinHintNone && c.Kind() != ir.JoinHintNone) {
 			best = c
 			bestCost = cc
 		}

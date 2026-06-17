@@ -44,7 +44,7 @@ KQL 文本
 | `internal/optimizer/stats` | 3 | 306 | ✅ 完成 | Catalog/Table/ColumnStats/MCV/Hist/CorrVs/IndexDef/CostModel、置信度(ceiling×完整度)、YAML加载器、示例 |
 | `internal/optimizer/cost` | 4 | 582 | ✅ 完成 | Estimator(= / < / in / between / AND / OR / join 1/max / corr修正)、Cost{IO,CPU,Net,Mem}、Weights(pg/duckdb/sqlite)、降级 |
 | `internal/optimizer/rules` | 4 | 709 | ✅ 完成 | RewriteRule接口、Engine(不动点+maxIter)、PredicatePushdown、ConstantFold(where 1=1删/where 1=0→Limit0)、ColumnPrune |
-| `internal/optimizer/decision` | 3 | 363 | ✅ 完成 | DecisionPolicy(Conservative/Aggressive/ConfidenceGated)、PredicateOrder、Explain(决策日志) |
+| `internal/optimizer/decision` | 6 | 750+ | ✅ 完成 | DecisionPolicy(Conservative/Aggressive/ConfidenceGated)、PredicateOrder、**JoinPlan(O4: Hash/NestLoop/Merge/IndexLookup cost+hint)**、AltPlan、Explain(决策日志) |
 | `pkg/kql` | 1 | 290 | ✅ 完成 | Exec/ExecOn/Explain(--policy/--stats)、Policy类型、OpenBackend(dsn路由)、Error |
 | `cmd/kql` | 3+1 | 583 | ✅ 完成 | CLI: run/validate/explain、--policy/--stats/-o csv/json/table、IR pretty-print、README |
 
@@ -69,6 +69,7 @@ KQL 文本
 - **O1 selectivity**：MCV/范围/IN/AND/OR/join/corr 完整公式表(DESIGN §6.3)
 - **O2 rules**：谓词下推、常量折叠、列裁剪（到不动点）
 - **O3 decision**：三策略(Conservative/Aggressive/ConfidenceGated)、谓词排序、Explain 日志
+- **O4 Join AltPlan**：cost-based join-method selection(Hash/NestLoop/Merge/IndexLookup)、ir.JoinHint、pg_hint_plan 注释 emit、策略分歧已验证
 - **O5 benchmark**：optimizer ~3.9µs < parse ~4.7µs
 - **用户可见**：`--stats <yaml> --policy gated explain` 展示统计→选择率→重排→决策
 
