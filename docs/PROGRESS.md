@@ -22,6 +22,7 @@
 | **F5** binder + **ColID 绑定** | `_next_` | `internal/frontend/binder/`（Schema→ColBinding + 大小写不敏感 Lookup + ColID 分配 + 物理名回写）| **pg 大小写折叠根治**：`EventType` 在 pg 存为 `eventtype` 也能正确解析执行（DESIGN §5 落地） |
 | **O0** stats catalog | `_next_` | `internal/optimizer/stats/`（Catalog/Table/ColumnStats/Index/CorrVs/CostModel + 置信度 + YAML 加载器）+ 示例 + 10 单测 | **统计描述可加载**：pg_analyze/manual/sampling 源、缺字段降级、CorrVs 可选、未知字段告警 |
 | **O1** selectivity + cost | `_next_` | `internal/optimizer/cost/`（Estimator 按 DESIGN §6.3 公式表 + join 选择率 + corr 修正 + Cost/Weights + 降级）+ 接进 rules | **选择率模型完整**：等值/范围/IN/AND/OR/join(1/max card)/corr 修正（rho 调独立假设高估），29 单测 |
+| **O3** 决策策略 | `_next_` | `internal/optimizer/decision/`（DecisionPolicy + 三策略 Conservative/Aggressive/ConfidenceGated + PredicateOrder + Explain） | **可替换策略 + 决策日志**：谓词按选择性排序（三策略同 IR 选不同序，9 单测） |
 | **O2** 核心规则 | `_next_` | `internal/optimizer/rules/`（RewriteRule + Engine 不动点 + PredicatePushdown + ConstantFold + ColumnPrune）+ CatalogStatsReader | **三条核心规则生效**：谓词下推、常量折叠（where 1=1 删/where 1=0→空）、列裁剪（sqlite+pg e2e 语义等价验证） |
 | **B2-min** pg 后端 | `_next_` | `internal/backend/pg/`（emit $N 占位符 + ILIKE + pg 函数）+ docker-compose.pg.yml + 10 pg e2e | **首次连真实生产库**：KQL → Docker PostgreSQL（pgx 纯 Go），10 用例全绿（sourceOnly/where/take/summarize/sort/distinct/in/ILIKE/binder） |
 

@@ -151,3 +151,29 @@ corr 5：正 rho 抬高/负 rho 压低/单 key 不受影响/无关列忽略/clam
  保守且够用的近似。
 - **left 表视角**：corr_vs 记在左表列上（join 的 driving side）；右表不重复算。
 - **sqrt 自实现**（牛顿法 16 迭代）：避免仅为这一个调用点 import math。
+
+## 8. O3 — 决策策略层（可替换 policy）
+
+**结构**：`internal/optimizer/decision/`
+- **policy.go**（O3.S3）：`DecisionPolicy` 接口（`Name()` + `OrderPredicates(table, sels) → (order, Decision)`）。
+  `Decision{PolicyName, Choice, Reason}` 带 reason 供 Explain。三策略：
+  - **Conservative**（默认，O3.S4）：统计弱（全 DefaultSelectivity）→ 保源序，不乱猜；统计真 → 按选择性升序（更选择性的先）。
+  - **Aggressive**（O3.S5）：永远按选择性排序，弱统计当均匀。
+  - **ConfidenceGated**（O3.S5）：catalog 置信度 ≥0.5 → Aggressive；否则 Conservative。
+- **predicate_order.go**：首个决策应用。Filter 的 AND 合取项按 policy 选的顺序重排。
+  **语义安全**（AND 可交换，只改性能不改结果）——"代价"部分是选哪个序。
+- **explain.go**（O3.S6）：`Explain(pipe, backend, policy, est, applyRules)` 一站式
+  `跑规则 → 跑决策 → emit SQL → 收集决策日志`，返回 `ExplainOutput{IR,SQL,Args,Dialect,Decisions,RuleChanges}`。
+
+**关键设计**：
+- **policy 可热替换**（DESIGN §6.4 要求）：CLI `--policy` 切换，Explain 显示 policy 名 + reason。
+- **决策带 reason**：每个 Decision 记录"哪条统计、什么选择性、为什么这个序"，`kql explain` 可读。
+- **PredicateOrder 不进 defaultEngine**：它是**代价决策**（取决于 policy/stats），不是 O2 的"恒安全重写"。
+  默认 ExecOn 仍只跑 O2 规则；PredicateOrder 走 Explain/可选 opt-in 路径。
+
+**测试**：9 个（Conservative 有统计重排/弱统计保序、Aggressive 总重排/弱统计 reason、
+Gated 高置信走 Aggressive/低置信走 Conservative、三策略同 IR reason 不同、单谓词 no-op）。
+全量 14 包绿。
+
+**不在范围**（下一轮）：O3.S1/S2 AltPlan/PhysicalPlanner（真正的多物理方案枚举：HashJoin vs
+NestedLoop vs IndexedLookup）—— 当前 PredicateOrder 是单决策点，PhysicalPlanner 是系统化枚举框架。
