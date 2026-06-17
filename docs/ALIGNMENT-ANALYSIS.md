@@ -17,15 +17,18 @@
 - **O1** 选择率 + 代价模型（标量/join/corr/Cost/weights/降级）
 - **O2** 规则引擎 + 三条核心规则（pushdown/constfold/columnprune）
 - **O3** 决策策略（三策略 + PredicateOrder + Explain）
+- **O4** Join AltPlan（cost-based join-method selection: Hash/NestLoop/Merge hint + IndexLookup cost + pg_hint_plan emit + graceful degrade）
+- **O5** benchmark（optimizer ~3.9µs < parse ~4.7µs）
 - **B2** pg P0 后端（pgx/CTE emit/$left/$right）
 - **B5** sqlite 后端（modernc 驱动/CTE emit）
 - **B7** 快照测试（48 golden + 等价性）
+- **S6** CI 工作流（.github/workflows/ci.yml: 3-OS test matrix + pg-e2e job + O4 graceful-degrade）
 - **T1/T3/T5** 语料（90 真实查询 100% / corpus regression / fuzz stress）
 
 ### ⚠️ 部分实现
 | Phase | 缺失子目标 | 影响 |
 |---|---|---|
-| **F5** binder | S1 无 scope stack/symbol 类型；S4 Col.T 仅从 schema 读取不推导；S6 不校验函数签名；S7 无 StrictMode | 中：类型推断仅覆盖源列；函数调用不做 arity 校验 |
+| **F5** binder | S1 无 scope stack/symbol 类型；S4 Col.T 仅从 schema 读取不推导；S7 无 StrictMode | 中：类型推断仅覆盖源列；~~S6 函数校验已完成（KQL003/KQL004 warning）~~ |
 | **F7** builtin | S1 Spec 缺 Params/ReturnType/Kind；S2 仅 ~103 函数（g4 有 380+）；S3 无 docs/capabilities.md | 中：高频函数覆盖好；低频函数按需补 |
 | **I2** translate | S4 FuncCall.Caps 用 DefaultCaps 不查 F7 表；S5 无 KQL010+ 码；S6 无 .ir golden | 低：Caps 在 emit 层按 catalog 查；golden 是 SQL 级 |
 | **I3** 投影列追踪 | 全部缺失（capabilities.md / projection.go / CTE 边界重绑定） | 中：CTE 边界决策靠经验而非系统追踪 |
@@ -44,10 +47,8 @@
 ### ❌ 完全缺失
 | Phase | 内容 | 优先级 |
 |---|---|---|
-| **O4** Join AltPlan | HashJoin/NestedLoop/IndexedLookup/MergeJoin 物理方案枚举 | 高 |
 | **O6** 高级规则 | ViewMatch/两阶段聚合/采样预过滤 | 中 |
 | **B6** UDF | pg plpgsql / duckdb UDF / UDF 生命周期 | 低（UDF-STRATEGY.md 分析了只有 3 类需要） |
-| **S6** Mock + CI | 无 mock backend / 无 testutil / 无 .github/workflows/ | 中（CI 是质量保证基础） |
 | **T2** 语料提取 | 无分类目录 / 无 sanitization-rules.yaml / 无 NOTICE | 低 |
 | 文档 | capabilities.md / backend-differences.md / stats-pg-mapping.md / perf-baseline.md | 低 |
 
@@ -93,11 +94,9 @@
 
 | 优先级 | 任务 | 理由 |
 |---|---|---|
-| 🔴 高 | O4 Join AltPlan | 优化器最大缺口；解锁 B3.S4 MATERIALIZED + S5.S5 policy demo |
-| 🟡 中 | CI 工作流（.github/workflows/） | 质量保证基础 |
-| 🟡 中 | F5 类型推断 + 函数签名校验 | KQL002/003/004 诊断码定义但从未触发 |
+| 🟡 中 | IndexLookup 结构化 emit（O4 deferred） | IN-list 改写：唯一不需 pg_hint_plan 的 join 优化（用户 pg 无该扩展） |
+| 🟡 中 | F5 类型推断（S4）| KQL002 诊断码定义但从未触发；算术/比较/聚合类型推导 |
 | 🟡 中 | Arrow Record 替代 [][]interface{} | DESIGN §0 承诺；大结果集性能 |
-| 🟡 中 | Unicode 空白 + `declare query_parameters` | Grammar 残留高频缺口；低难度 |
 | 🟢 低 | F7 完整函数表（380+）/ 文档 | 按需补 |
 | 🟢 低 | T2 语料分类/NOTICE | 合规性 |
 | 🟢 低 | I4/I5 IR pretty-print/等价性 | 有 SQL golden 间接覆盖 |
@@ -105,3 +104,9 @@
 ### 已完成（2026-06-17）
 - ✅ **`set`/`as`/`invoke` 算子 dispatch** — 三个生产 KQL 高频构造补齐（commit 7d60561），
   附带修复 `kind` 参数名误吞 + binder Star 丢列两个深层 bug。语料 89→90（100%）。
+- ✅ **Unicode 空白 + `declare query_parameters`** — g4 WHITESPACE 全字符集 + 参数化查询解析（commit add964c）。
+- ✅ **CI 工作流（S6）** — 3-OS test matrix + pg-e2e job + O4 graceful-degrade（commit 19bd446 + b8e4f77）。
+- ✅ **F5.S6 函数校验** — KQL003/KQL004 warning 激活（commit d0cbaae）。
+- ✅ **O4 Join AltPlan** — cost-based join-method selection（Hash/NestLoop/Merge hint + IndexLookup cost），
+  ir.JoinHint + pg_hint_plan emit + graceful degrade 验证（commits f0117d9–816b1b1 + 4f01a14）。
+  生产安全已验证：hint 在无 pg_hint_plan 的 stock postgres:16 上正确执行。
