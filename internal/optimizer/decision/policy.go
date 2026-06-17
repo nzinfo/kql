@@ -19,6 +19,9 @@
 package decision
 
 import (
+	"fmt"
+
+	"nzinfo/kql/internal/ir"
 	"nzinfo/kql/internal/optimizer/cost"
 	"nzinfo/kql/internal/optimizer/stats"
 )
@@ -44,6 +47,11 @@ type DecisionPolicy interface {
 	// a Decision explaining why. The first predicate evaluated should filter
 	// the most rows (lowest selectivity), so the rest do less work.
 	OrderPredicates(table string, selectivities []float64) (order []int, d Decision)
+	// ChooseJoinPlan selects a physical join method from the enumerated
+	// candidates (O4). Returns the winning AltPlan and a Decision explaining
+	// the rationale for Explain. candidates is never empty (the planner always
+	// includes a Default/let-backend-decide option).
+	ChooseJoinPlan(candidates []AltPlan, weights cost.CostWeights) (AltPlan, Decision)
 }
 
 // --- Strategy implementations ---
@@ -77,6 +85,51 @@ func (Conservative) OrderPredicates(table string, sels []float64) ([]int, Decisi
 	}
 }
 
+// ChooseJoinPlan (O4): Conservative defaults to "let the backend planner
+// decide" (the Default candidate) unless ONE non-default candidate is clearly
+// dominant — defined as ≥10× cheaper than the default AND cheaper than every
+// other candidate. This avoids overriding pg's planner on marginal calls while
+// still picking up unambiguous wins (e.g. a tiny indexed lookup).
+func (Conservative) ChooseJoinPlan(cands []AltPlan, w cost.CostWeights) (AltPlan, Decision) {
+	def := findDefault(cands)
+	if def == nil || len(cands) <= 1 {
+		// No default option or no alternatives — return the first candidate.
+		if len(cands) == 0 {
+			return nil, Decision{PolicyName: "Conservative", Choice: "JoinPlan", Reason: "no candidates"}
+		}
+		return cands[0], Decision{PolicyName: "Conservative", Choice: "JoinPlan", Reason: cands[0].Describe()}
+	}
+	defCost := def.Cost().Total(w)
+	// Find the cheapest non-default candidate.
+	best := def
+	bestCost := defCost
+	clearlyDominant := false
+	for _, c := range cands {
+		if c.Kind() == ir.JoinHintNone {
+			continue
+		}
+		cc := c.Cost().Total(w)
+		if cc < bestCost {
+			best = c
+			bestCost = cc
+			// "Clearly dominant": ≥10× cheaper than the default baseline.
+			clearlyDominant = defCost > 0 && bestCost < defCost/10
+		}
+	}
+	if !clearlyDominant {
+		return def, Decision{
+			PolicyName: "Conservative",
+			Choice:     "JoinPlan",
+			Reason:     "let backend planner decide (no candidate ≥10× cheaper than default)",
+		}
+	}
+	return best, Decision{
+		PolicyName: "Conservative",
+		Choice:     "JoinPlan",
+		Reason:     fmt.Sprintf("clear winner: %s (%.2f vs default %.2f)", best.Describe(), bestCost, defCost),
+	}
+}
+
 // Aggressive always orders most-selective-first regardless of confidence,
 // treating missing stats as uniform (DefaultSelectivity). O3.S5.
 type Aggressive struct{}
@@ -92,6 +145,29 @@ func (Aggressive) OrderPredicates(table string, sels []float64) ([]int, Decision
 		reason = "no real stats — treating predicates as uniform; " + reason
 	}
 	return order, Decision{PolicyName: "Aggressive", Choice: "PredicateOrder", Reason: reason}
+}
+
+// ChooseJoinPlan (O4): Aggressive always picks the lowest-cost candidate
+// (argmin Cost.Total(weights)), even with weak stats. It trusts the estimator's
+// uniform-fallback estimates rather than deferring to the backend planner.
+func (Aggressive) ChooseJoinPlan(cands []AltPlan, w cost.CostWeights) (AltPlan, Decision) {
+	if len(cands) == 0 {
+		return nil, Decision{PolicyName: "Aggressive", Choice: "JoinPlan", Reason: "no candidates"}
+	}
+	best := cands[0]
+	bestCost := best.Cost().Total(w)
+	for _, c := range cands[1:] {
+		cc := c.Cost().Total(w)
+		if cc < bestCost {
+			best = c
+			bestCost = cc
+		}
+	}
+	return best, Decision{
+		PolicyName: "Aggressive",
+		Choice:     "JoinPlan",
+		Reason:     fmt.Sprintf("lowest cost: %s (%.4f)", best.Describe(), bestCost),
+	}
 }
 
 // ConfidenceGated is Aggressive when the catalog confidence for the table is
@@ -119,7 +195,52 @@ func (g ConfidenceGated) OrderPredicates(table string, sels []float64) ([]int, D
 	return order, d
 }
 
+// ChooseJoinPlan (O4): delegate to Aggressive or Conservative based on the
+// join's left-table confidence. High confidence → trust the cost estimates
+// (Aggressive); low confidence → defer to the backend planner (Conservative).
+// The table name isn't available here (ChooseJoinPlan is join-agnostic in the
+// interface), so we check confidence on the catalog as a whole — if ANY table
+// in the catalog is high-confidence, we trust the estimates. This is a
+// pragmatic approximation; a future refinement can thread the table name.
+func (g ConfidenceGated) ChooseJoinPlan(cands []AltPlan, w cost.CostWeights) (AltPlan, Decision) {
+	// Without a catalog we can't assess confidence → Conservative.
+	if g.Catalog == nil {
+		plan, d := Conservative{}.ChooseJoinPlan(cands, w)
+		d.PolicyName = "ConfidenceGated"
+		d.Reason = "no catalog → " + d.Reason
+		return plan, d
+	}
+	// Check if the catalog has reasonable confidence overall (≥1 high-conf table).
+	anyHigh := false
+	for name := range g.Catalog.Tables {
+		if cost.EstimateConfidence(g.Catalog, name) == cost.HighConfidence {
+			anyHigh = true
+			break
+		}
+	}
+	if anyHigh {
+		plan, d := Aggressive{}.ChooseJoinPlan(cands, w)
+		d.PolicyName = "ConfidenceGated"
+		d.Reason = "high confidence → " + d.Reason
+		return plan, d
+	}
+	plan, d := Conservative{}.ChooseJoinPlan(cands, w)
+	d.PolicyName = "ConfidenceGated"
+	d.Reason = "low confidence → " + d.Reason
+	return plan, d
+}
+
 // --- helpers ---
+
+// findDefault returns the Default (JoinHintNone) candidate from a list, or nil.
+func findDefault(cands []AltPlan) AltPlan {
+	for _, c := range cands {
+		if c.Kind() == ir.JoinHintNone {
+			return c
+		}
+	}
+	return nil
+}
 
 // sortBySelectivity returns indices ordered by ascending selectivity (most
 // selective / smallest value first).
