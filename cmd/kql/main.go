@@ -21,7 +21,6 @@ import (
 	"os"
 	"strings"
 
-	"nzinfo/kql/internal/backend/sqlite"
 	"nzinfo/kql/pkg/kql"
 )
 
@@ -113,14 +112,10 @@ func flagStr(args []string, name, def string) string {
 	return def
 }
 
-// runQuery executes a KQL query against the sqlite backend and prints rows.
+// runQuery executes a KQL query against the backend selected by the dsn scheme
+// (postgres:// → pg; anything else → sqlite) and prints rows.
 func runQuery(ctx context.Context, dsn, format, query string) error {
-	bk, err := sqlite.New(dsn)
-	if err != nil {
-		return err
-	}
-	defer bk.Close()
-	res, err := kql.ExecOn(ctx, bk, query)
+	res, err := kql.Exec(ctx, dsn, query)
 	if err != nil {
 		return err
 	}
@@ -151,7 +146,7 @@ func runExplain(dsn string, args []string) error {
 	fmt.Println()
 
 	if dsn != "" {
-		bk, err := sqlite.New(dsn)
+		bk, err := kql.OpenBackend(dsn)
 		if err != nil {
 			return err
 		}
@@ -160,7 +155,7 @@ func runExplain(dsn string, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("# Emitted SQL (sqlite)")
+		fmt.Printf("# Emitted SQL (%s)\n", bk.Dialect())
 		fmt.Println(q.SQL)
 		if len(q.Args) > 0 {
 			fmt.Printf("\n# Bind args: %v\n", q.Args)

@@ -69,4 +69,8 @@ type Backend interface {
 	// Exec runs the Query and returns the rowset. The dsn/connection is owned
 	// by the concrete backend (e.g. sqliteBackend holds a *sql.DB).
 	Exec(ctx context.Context, q *Query) (*Result, error)
+
+	// Close releases the backend's resources (connection pool). Implementations
+	// backed by NewFromDB may make this a no-op if the caller owns the db.
+	Close() error
 }

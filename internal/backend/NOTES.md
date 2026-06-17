@@ -49,3 +49,43 @@ sum/avg/min/max 等聚合名直接 UPPER 后透传，SQLite 原生支持。bin(c
 - **F7 builtin 接入**：FuncCall.Caps 决定每个函数走 SQL expr / UDF / 客户端 post-process。
 - **Optimizer 接入**：stage 合并（相邻 SELECT 合一）、谓词下推、CTE 断点。
 - **pg/duckdb 后端**：复用 emit 结构，换占位符风格（`$1`）、类型映射、方言。
+
+## 4. PostgreSQL 后端（B2）
+
+**结构**：`internal/backend/pg/`（emit/emit_expr/backend/schema），镜像 sqlite 的
+嵌套子查询骨架，两处方言差异：
+- 占位符 `$N`（pg 风格，sqlite 是 `?N`）；同样用编号占位符避免嵌套参数错序。
+- 字符串操作符用 **ILIKE**（真大小写不敏感，比 sqlite 的 ASCII-only LIKE 更接近 KQL）。
+- 函数重写：`ago`→`now() - (x)::interval`、`make_set`→`array_agg(DISTINCT)`、
+  `array_length`→`array_length(x,1)`、member 访问→`->>`（JSONB）、index→`->`。
+
+**SchemaProvider**：从 `information_schema.columns` 读列（pg 原生，比 PRAGMA 跨方言）。
+
+**接线**：`pkg/kql.Exec` 按 dsn scheme 路由（`postgres://`→pg，其余→sqlite）。
+CLI 的 run/explain 都走 `kql.OpenBackend` 统一路由。
+
+**Docker 复现**：`docker-compose.pg.yml`（postgres:16，:5433，kql/kql）+
+`testdata/pg-seed.sql`。`KQL_PG_DSN=... go test -run TestPg_` 跑 pg e2e（无 DSN 则 skip）。
+
+## 5. pg 关键坑（防再犯）
+
+### 5.1 Emit 必须 newEmitter()，不能 &emitter{} ⚠️
+`Emit` 第一版写 `e := &emitter{}`，`args` map 是 nil → `bind` 写 nil map → panic。
+必须 `newEmitter()` 初始化 `args: map[int]interface{}{}` 和 `postProc`。
+（sqlite 包用 `newEmitter()` 没这问题，照抄时漏了。）
+
+### 5.2 pg 大小写折叠（case folding）—— ColID 绑定的核心理由 ⚠️⚠️
+pg 把**未加引号的**标识符折叠成小写：`CREATE TABLE events (EventType TEXT)` 实际存成
+`eventtype`。KQL 标识符大小写敏感，所以 `where EventType has "x"` 在 pg 上：
+- binder（从 information_schema 读到 `eventtype`）报 `column "EventType" not found`
+- 或运行时报 `column "eventtype" does not exist`
+这正是 DESIGN §5 说要用 **ColID 物理绑定**而非字符串列名的核心理由——多方言后端的
+大小写/保留字/引号差异只能靠整数 ID 抽象掉。当前最小版 emit 仍用字符串列名，pg 的
+case-folding 是**已知限制**（测试用存储后的小写名绕过）。真解：binder 给每个列引用
+解析出 ColID，emit 按 ColID 输出方言正确的引用名。
+
+### 5.3 iff/CASE 的 mixed-type 分支绑定 ⚠️（待修）
+`iff(damage > 2000, 1, 0)` → `CASE WHEN ... THEN $1 ELSE $2 END`，pgx 报
+`unable to encode 1 into text format (OID 25)`。pg 从 CASE 上下文推断结果列为 text，
+而绑定值是 int。需要给 THEN/ELSE 加显式类型转换或让 binder 给字面量类型信息。
+暂记为 follow-up（COUNT/SUM/where 等主路径都正常）。

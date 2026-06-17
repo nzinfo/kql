@@ -1,0 +1,25 @@
+# Reproducible dev/test PostgreSQL for the kql project.
+#
+#   docker compose -f docker-compose.pg.yml up -d
+#   docker compose -f docker-compose.pg.yml exec pg psql -U kql -d kql -f /seed.sql
+#   KQL_PG_DSN="postgres://kql:kql@localhost:5433/kql" go test ./pkg/kql/ -run TestPg_
+#
+# This is for DEVELOPMENT/TESTING only (matches DESIGN.md: sqlite = prototype/test,
+# pg = production). CI can use the same compose to run the pg e2e suite.
+services:
+  pg:
+    image: postgres:16
+    container_name: kql-pg
+    environment:
+      POSTGRES_USER: kql
+      POSTGRES_PASSWORD: kql
+      POSTGRES_DB: kql
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./testdata/pg-seed.sql:/seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kql"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

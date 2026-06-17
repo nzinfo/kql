@@ -16,8 +16,10 @@ package kql
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"nzinfo/kql/internal/backend"
+	"nzinfo/kql/internal/backend/pg"
 	"nzinfo/kql/internal/backend/sqlite"
 	"nzinfo/kql/internal/frontend/binder"
 	"nzinfo/kql/internal/frontend/diagnostic"
@@ -25,18 +27,47 @@ import (
 	"nzinfo/kql/internal/ir"
 )
 
-// Exec runs a KQL query against the SQLite database at dsn and returns the
-// result. Parse/translate errors are surfaced as a kql.Error wrapping the
-// diagnostic list.
+// Exec runs a KQL query against the database at dsn and returns the result.
+// The backend is selected by dsn scheme: `postgres://`/`postgresql://` (or a
+// key=value string containing `host=`/`postgres`) → pg; anything else
+// (`:memory:`, `file:...`, a `.db` path) → sqlite.
 //
-// dsn examples: ":memory:", "file:/path/to.db", "file::memory:?cache=shared".
+// Parse/translate/bind errors are surfaced as a kql.Error wrapping the
+// diagnostic list.
 func Exec(ctx context.Context, dsn, query string) (*Result, error) {
-	bk, err := sqlite.New(dsn)
+	bk, err := openBackend(dsn)
 	if err != nil {
 		return nil, err
 	}
 	defer bk.Close()
 	return ExecOn(ctx, bk, query)
+}
+
+// openBackend opens a backend chosen by the dsn scheme. SQLite is the default
+// (prototype/test backend); pg is selected for postgres URLs/strings.
+// Exported as OpenBackend so the CLI's explain path can emit dialect-correct
+// SQL without re-implementing routing.
+func OpenBackend(dsn string) (backend.Backend, error) { return openBackend(dsn) }
+
+func openBackend(dsn string) (backend.Backend, error) {
+	if isPgDSN(dsn) {
+		return pg.New(dsn)
+	}
+	return sqlite.New(dsn)
+}
+
+// isPgDSN reports whether dsn refers to a PostgreSQL database.
+func isPgDSN(dsn string) bool {
+	low := strings.ToLower(dsn)
+	if strings.HasPrefix(low, "postgres://") || strings.HasPrefix(low, "postgresql://") {
+		return true
+	}
+	// key=value conninfo form: host=... user=... — treat as pg if it has host= or
+	// postgres markers and isn't a file path.
+	if strings.Contains(low, "host=") || strings.Contains(low, "user=") && strings.Contains(low, "dbname=") {
+		return true
+	}
+	return false
 }
 
 // ExecOn runs a KQL query against an already-open backend. The caller owns the
