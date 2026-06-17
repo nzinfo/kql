@@ -221,3 +221,36 @@ func TestJoinKindValues(t *testing.T) {
 		seen[k] = true
 	}
 }
+
+// TestJoinHintValues confirms the JoinHint enum is distinct + zero-value is
+// JoinHintNone (the no-regression guarantee: an unset Hint = "let backend
+// decide" = current behaviour).
+func TestJoinHintValues(t *testing.T) {
+	hints := []JoinHint{JoinHintNone, JoinHintHash, JoinHintNestLoop, JoinHintMerge, JoinHintIndexLookup}
+	if JoinHintNone != 0 {
+		t.Errorf("JoinHintNone = %d, want 0 (zero-value must be the safe default)", JoinHintNone)
+	}
+	seen := map[JoinHint]bool{}
+	for _, h := range hints {
+		if seen[h] {
+			t.Errorf("JoinHint %d duplicated", h)
+		}
+		seen[h] = true
+	}
+}
+
+// TestJoinHintString confirms the String() rendering used in Explain + emit.
+func TestJoinHintString(t *testing.T) {
+	cases := map[JoinHint]string{
+		JoinHintNone:        "none",
+		JoinHintHash:        "hash",
+		JoinHintNestLoop:    "nestloop",
+		JoinHintMerge:       "merge",
+		JoinHintIndexLookup: "indexlookup",
+	}
+	for h, want := range cases {
+		if got := h.String(); got != want {
+			t.Errorf("JoinHint(%d).String() = %q, want %q", h, got, want)
+		}
+	}
+}

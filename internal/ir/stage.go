@@ -35,6 +35,41 @@ const (
 	JoinFullOuter
 )
 
+// JoinHint is the optimizer's physical join-method recommendation (O4). It is
+// set by the cost-based JoinPlan decision pass and read by the backend emitter
+// to produce a join-method directive. The zero value JoinHintNone means "let
+// the backend's own planner decide" (the safe default — never worse than stock).
+//
+// Hints are advisory: PostgreSQL emits a pg_hint_plan comment when the
+// extension is present (silently ignored otherwise); sqlite/duckdb have no join
+// hints so the field is recorded for Explain but does not change the SQL.
+// JoinHintIndexLookup is a structural variant (deferred emit — see O4 plan).
+type JoinHint int
+
+// Join hints.
+const (
+	JoinHintNone JoinHint = iota // let the backend planner decide (default)
+	JoinHintHash                 // prefer hash join
+	JoinHintNestLoop             // prefer nested-loop join
+	JoinHintMerge                // prefer merge join
+	JoinHintIndexLookup          // structural: IN-list batched index lookup (deferred emit)
+)
+
+// String returns a lowercase name suitable for Explain and hint emission.
+func (h JoinHint) String() string {
+	switch h {
+	case JoinHintHash:
+		return "hash"
+	case JoinHintNestLoop:
+		return "nestloop"
+	case JoinHintMerge:
+		return "merge"
+	case JoinHintIndexLookup:
+		return "indexlookup"
+	}
+	return "none"
+}
+
 // SortKey is one ordering key: an expression with direction and null placement.
 type SortKey struct {
 	Expr       Expr
@@ -92,6 +127,7 @@ type Join struct {
 	Kind     JoinKind   // innerunique/inner/left/right/full
 	Right    *Pipeline  // right side (sub-pipeline or table ref)
 	On       []Expr     // join conditions (typically Col == Col)
+	Hint     JoinHint   // optimizer-set physical-method recommendation (O4); zero = decide
 }
 
 // Pos returns the stage position.
