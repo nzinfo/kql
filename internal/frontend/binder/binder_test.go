@@ -392,3 +392,184 @@ func TestFuncValidation_CaseInsensitive(t *testing.T) {
 		t.Errorf("TOSTRING should resolve case-insensitively (no KQL003): %v", diags.Render())
 	}
 }
+
+
+// --- F5.S4 type inference tests (KQL002 activation) ---
+
+// inferType runs bind and returns the type of the single Extend column's expr.
+// Used to verify inference rules produce the right result type.
+func inferType(t *testing.T, expr ir.Expr, srcSchema []ColBinding) ir.Type {
+	t.Helper()
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{{Name: "_r", Expr: expr}}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": srcSchema}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	return expr.Type()
+}
+
+// TestInfer_ArithmeticPromotion: int+int=int, int+real=real, long+long=long.
+func TestInfer_ArithmeticPromotion(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "i", Type: ir.TypeInt},
+		{ColID: 2, PhysicalName: "l", Type: ir.TypeLong},
+		{ColID: 3, PhysicalName: "r", Type: ir.TypeReal},
+	}
+	cases := []struct {
+		expr ir.Expr
+		want ir.Type
+	}{
+		{&ir.BinOp{Op: token.ADD, X: col("i"), Y: col("i")}, ir.TypeInt},
+		{&ir.BinOp{Op: token.ADD, X: col("i"), Y: col("r")}, ir.TypeReal},
+		{&ir.BinOp{Op: token.ADD, X: col("l"), Y: col("l")}, ir.TypeLong},
+		{&ir.BinOp{Op: token.MUL, X: col("l"), Y: col("r")}, ir.TypeReal},
+	}
+	for i, c := range cases {
+		got := inferType(t, c.expr, schema)
+		if got != c.want {
+			t.Errorf("case %d: got %v, want %v", i, got, c.want)
+		}
+	}
+}
+
+// TestInfer_ComparisonReturnsBool: all comparison ops → bool.
+func TestInfer_ComparisonReturnsBool(t *testing.T) {
+	schema := []ColBinding{{ColID: 1, PhysicalName: "x", Type: ir.TypeInt}}
+	for _, op := range []token.Token{token.EQL, token.NEQ, token.LSS, token.GTR, token.LEQ, token.GEQ} {
+		expr := &ir.BinOp{Op: op, X: col("x"), Y: col("x")}
+		got := inferType(t, expr, schema)
+		if got != ir.TypeBool {
+			t.Errorf("%v: got %v, want bool", op, got)
+		}
+	}
+}
+
+// TestInfer_LogicalReturnsBool: and/or → bool.
+func TestInfer_LogicalReturnsBool(t *testing.T) {
+	schema := []ColBinding{{ColID: 1, PhysicalName: "b", Type: ir.TypeBool}}
+	expr := &ir.BinOp{Op: token.AND, X: col("b"), Y: col("b")}
+	got := inferType(t, expr, schema)
+	if got != ir.TypeBool {
+		t.Errorf("and: got %v, want bool", got)
+	}
+}
+
+// TestInfer_TypeMismatch_KQL002: arithmetic on incompatible types (string * int)
+// emits KQL002 as a WARNING (not error — KQL allows runtime coercion).
+func TestInfer_TypeMismatch_KQL002(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "s", Type: ir.TypeString},
+		{ColID: 2, PhysicalName: "i", Type: ir.TypeInt},
+	}
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: &ir.BinOp{Op: token.MUL, X: col("s"), Y: col("i")}},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": schema}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if !hasDiagCode(t, &diags, diagnostic.TypeMismatch) {
+		t.Errorf("expected KQL002 TypeMismatch for string * int, got: %v", diags.Render())
+	}
+	if diags.HasErrors() {
+		t.Errorf("KQL002 must be a warning, not an error: %v", diags.Render())
+	}
+}
+
+// TestInfer_NoWarningForCompatibleNumeric: int compared to long should NOT emit
+// KQL002 (they're both numeric → compatible).
+func TestInfer_NoWarningForCompatibleNumeric(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "i", Type: ir.TypeInt},
+		{ColID: 2, PhysicalName: "l", Type: ir.TypeLong},
+	}
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: &ir.BinOp{Op: token.EQL, X: col("i"), Y: col("l")}},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": schema}}
+	var diags diagnostic.List
+	Bind(pipe, prov, &diags)
+	if hasDiagCode(t, &diags, diagnostic.TypeMismatch) {
+		t.Errorf("int == long should NOT emit KQL002 (compatible numeric)")
+	}
+}
+
+// TestInfer_FuncReturnTypes: known functions get correct return types.
+func TestInfer_FuncReturnTypes(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "x", Type: ir.TypeLong},
+		{ColID: 2, PhysicalName: "s", Type: ir.TypeString},
+	}
+	cases := []struct {
+		name string
+		args []ir.Expr
+		want ir.Type
+	}{
+		{"count", nil, ir.TypeLong},
+		{"sum", []ir.Expr{col("x")}, ir.TypeLong},
+		{"tostring", []ir.Expr{col("x")}, ir.TypeString},
+		{"strcat", []ir.Expr{col("s"), col("s")}, ir.TypeString},
+		{"iff", []ir.Expr{col("x"), col("s"), col("s")}, ir.TypeString},
+		{"abs", []ir.Expr{col("x")}, ir.TypeLong},
+		{"make_set", []ir.Expr{col("x")}, ir.TypeDynamic},
+		{"array_length", []ir.Expr{col("x")}, ir.TypeLong},
+	}
+	for _, c := range cases {
+		fc := &ir.FuncCall{Name: c.name, Args: c.args}
+		got := inferType(t, fc, schema)
+		if got != c.want {
+			t.Errorf("%s(): got %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestInfer_UnaryPreservesType: unary +/- preserves the numeric type.
+func TestInfer_UnaryPreservesType(t *testing.T) {
+	schema := []ColBinding{{ColID: 1, PhysicalName: "x", Type: ir.TypeReal}}
+	expr := &ir.UnaryOp{Op: token.SUB, X: col("x")}
+	got := inferType(t, expr, schema)
+	if got != ir.TypeReal {
+		t.Errorf("unary -: got %v, want real", got)
+	}
+}
+
+// TestInfer_StringConcat: string + string = string (KQL allows + for concat).
+func TestInfer_StringConcat(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "s", Type: ir.TypeString},
+	}
+	expr := &ir.BinOp{Op: token.ADD, X: col("s"), Y: col("s")}
+	got := inferType(t, expr, schema)
+	if got != ir.TypeString {
+		t.Errorf("string + string: got %v, want string", got)
+	}
+}
+
+// TestInfer_TimespanArithmetic: timespan + timespan = timespan.
+func TestInfer_TimespanArithmetic(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "ts", Type: ir.TypeTimeSpan},
+	}
+	expr := &ir.BinOp{Op: token.ADD, X: col("ts"), Y: col("ts")}
+	got := inferType(t, expr, schema)
+	if got != ir.TypeTimeSpan {
+		t.Errorf("timespan + timespan: got %v, want timespan", got)
+	}
+}

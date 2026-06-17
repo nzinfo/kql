@@ -305,13 +305,16 @@ func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 	case *ir.BinOp:
 		b.checkExpr(n.X, in)
 		b.checkExpr(n.Y, in)
+		b.inferExprType(n) // F5.S4: set result type + KQL002 on mismatch
 	case *ir.UnaryOp:
 		b.checkExpr(n.X, in)
+		b.inferExprType(n)
 	case *ir.FuncCall:
 		b.checkFuncCall(n)
 		for _, a := range n.Args {
 			b.checkExpr(a, in)
 		}
+		b.inferExprType(n)
 	case *ir.Member:
 		b.checkExpr(n.X, in)
 	case *ir.Index:
@@ -321,6 +324,7 @@ func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 		b.checkExpr(n.Cond, in)
 		b.checkExpr(n.Then, in)
 		b.checkExpr(n.Else, in)
+		b.inferExprType(n)
 	case *ir.List:
 		for _, el := range n.Elems {
 			b.checkExpr(el, in)
