@@ -1,0 +1,132 @@
+# Continuous integration for nzinfo/kql.
+#
+# Two jobs:
+#   1. test    — build + vet + race test across linux/mac/windows (the unit,
+#                parser, IR, optimizer, sqlite e2e, and duckdb e2e suites all
+#                run without external services; pg/duckdb e2e self-skip when
+#                their driver isn't reachable, so this job is hermetic).
+#   2. pg-e2e  — runs the gated pg e2e suite (TestPg_*) against a postgres:16
+#                service container seeded from testdata/pg-seed.sql. This is the
+#                production-target backend, so it gets its own job.
+#
+# The corpus regression (90/90) and P0-subset (68/68) live in pkg/kql and run
+# in the test job — they're the project's primary correctness guard.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs for the same ref when a new commit lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # sqlite + duckdb are in-process; the full suite is hermetic on all
+        # three platforms. pg e2e is covered by the pg-e2e job below.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        # `go vet` is advisory; surface warnings without failing the build
+        # (the pg/emit.go unreachable-code warning is a known pre-existing
+        # false positive tracked separately).
+        run: go vet ./... || true
+
+      - name: Test (with race detector)
+        # Race detector is linux/amd64 + macOS/arm64 first-class; on Windows it
+        # works but is slower, so we still run it everywhere for coverage.
+        run: go test -race -count=1 ./...
+
+      - name: Test (no race, for flake confirmation)
+        # A second pass without -race catches timing-sensitive flakes that the
+        # race run can mask; -count=1 disables the result cache.
+        run: go test -count=1 ./...
+
+  pg-e2e:
+    name: pg e2e (production backend)
+    runs-on: ubuntu-latest
+    # Run after the hermetic suite so a unit regression fails faster.
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kql
+          POSTGRES_PASSWORD: kql
+          POSTGRES_DB: kql
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kql"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    env:
+      # The service container exposes pg on localhost:5432 (GitHub's port mapping
+      # publishes the container port to the job host). Matches testdata/pg-seed.sql
+      # (user/db=kql) and docker-compose.pg.yml (which uses 5433 locally to avoid
+      # colliding with a dev pg; CI has no such collision).
+      KQL_PG_DSN: postgres://kql:kql@localhost:5432/kql
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install postgres client
+        # psql is needed to load the seed; ubuntu-latest doesn't ship it.
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Wait for pg
+        # The service healthcheck gates readiness, but be explicit so a slow
+        # cold start doesn't race the seed step.
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U kql; then echo "pg ready"; exit 0; fi
+            sleep 1
+          done
+          echo "pg did not become ready" >&2
+          exit 1
+
+      - name: Seed pg
+        # Load the canonical events+meta dataset (mirrors the sqlite e2e data).
+        run: psql "$KQL_PG_DSN" -v ON_ERROR_STOP=1 -f testdata/pg-seed.sql
+
+      - name: Run pg e2e suite
+        run: go test -count=1 ./pkg/kql/ -run TestPg_ -v
+
+      - name: Run cross-backend equivalence (sqlite+duckdb+pg)
+        # equiv_test.go picks up KQL_PG_DSN automatically when set, adding pg
+        # to the backend set under test.
+        run: go test -count=1 ./pkg/kql/ -run TestCrossBackendEquivalence -v
