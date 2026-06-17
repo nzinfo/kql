@@ -1,4 +1,4 @@
-# Phase × Grammar 对齐差距分析（2026-06-18）
+# Phase × Grammar 对齐差距分析（2026-06-18，更新 2026-06-17）
 
 > 对照 docs/phases/ 子目标 + .source-projects/Kusto-Query-Language/grammar/ 金标准，
 > 系统性盘点已实现/部分实现/缺失项。
@@ -20,7 +20,7 @@
 - **B2** pg P0 后端（pgx/CTE emit/$left/$right）
 - **B5** sqlite 后端（modernc 驱动/CTE emit）
 - **B7** 快照测试（48 golden + 等价性）
-- **T1/T3/T5** 语料（89 真实查询 100% / corpus regression / fuzz stress）
+- **T1/T3/T5** 语料（90 真实查询 100% / corpus regression / fuzz stress）
 
 ### ⚠️ 部分实现
 | Phase | 缺失子目标 | 影响 |
@@ -54,20 +54,24 @@
 ## 二、金标准 Grammar 对齐
 
 ### ✅ 已覆盖
-- 全部 P0/P1/P2 算子（89/89 真实语料 100%）
+- 全部 P0/P1/P2 算子（90/90 真实语料 100%）
 - 全部标点 token + 全部字符串/数值/类型字面量
 - `in~`/`!in~`/`has_any`/`has_all`/全部字符串操作符（含否定形式）
 - `$left`/`$right` join 限定引用
 - 函数式 lambda / datatable / union-as-function / materialize 管道参数
 - project-away/keep/rename/reorder/smart（深层 bug 已修）
+- **`set` 语句 / `| as Name` / `| invoke F()`（2026-06-17 补齐）**
+  - `setStatement`：`set querytrace;` / `set x=30000000;` — SetStmt AST，translator 跳过
+  - `asOperator`：`| as Result` — AsOp AST，passthrough Project{\*}
+  - `invokeOperator`：`| invoke MyPlugin(x)` — InvokeOp AST（Call 捕获），passthrough
+  - 附带修复两个深层 bug：
+    - `tryParamName` 误吞列名 `kind`（`where kind == "x"` 断）→ 只在紧跟 `=` 时认作参数名
+    - binder `Project{Star}` 丢列（render/as/invoke/getschema/externaldata/mv-expand/parse 全受影响）→ Star 展开前传
 
-### ⚠️ 缺失但低频（0/89 语料）
+### ⚠️ 缺失但低频（0/90 语料）
 | 缺失 | g4 规则 | 真实频率 | 修复难度 |
 |---|---|---|---|
-| `set` 语句 | setStatement | **中高**（生产查询常用） | 低（加 dispatch） |
 | `declare query_parameters` | declareQueryParametersStatement | **中**（参数化查询） | 低（加 token + dispatch） |
-| `\| as Name` | asOperator | **中**（结果命名） | 低（加 dispatch） |
-| `\| invoke Func()` | invokeOperator | **中** | 低（加 dispatch） |
 | `\| search Kind` | searchOperator (piped) | 中 | 中（特殊搜索语法） |
 | `mv-apply` | mvapplyOperator | 低中 | 低（类似 mv-expand） |
 | `:` 字符串操作符 | stringBinaryOperation | 低 | 低（加 isStringOpToken） |
@@ -79,21 +83,25 @@
 | `.[]` legacy 路径元素 | legacyFunctionCallOrPath | 极低 | 低 |
 
 ### 最高价值修复优先级（Grammar 方向）
-1. **`set` 语句** — 生产 KQL 常用（`set query_results_cache_max_age`）
-2. **`as` 算子** — 结果命名（常见）
-3. **`invoke` 算子** — 调用存储函数
-4. **Unicode 空白** — BOM 文件导入健壮性
-5. **`declare query_parameters`** — 参数化查询
+1. **Unicode 空白** — BOM 文件导入健壮性（低难度，防粘贴/导入断）
+2. **`declare query_parameters`** — 参数化查询（低难度，生产常用）
+3. **`mv-apply`** — 类似 mv-expand，已有基础设施（低难度）
+4. **`:` 字符串操作符** — 加 isStringOpToken（低难度）
+5. **通配符表名 `App*`** — union 常用（中难度）
 
 ## 三、建议的下一步优先级（综合 Phase + Grammar）
 
 | 优先级 | 任务 | 理由 |
 |---|---|---|
 | 🔴 高 | O4 Join AltPlan | 优化器最大缺口；解锁 B3.S4 MATERIALIZED + S5.S5 policy demo |
-| 🔴 高 | `set`/`as`/`invoke` 算子 dispatch | 真实查询解析覆盖 |
 | 🟡 中 | CI 工作流（.github/workflows/） | 质量保证基础 |
 | 🟡 中 | F5 类型推断 + 函数签名校验 | KQL002/003/004 诊断码定义但从未触发 |
 | 🟡 中 | Arrow Record 替代 [][]interface{} | DESIGN §0 承诺；大结果集性能 |
+| 🟡 中 | Unicode 空白 + `declare query_parameters` | Grammar 残留高频缺口；低难度 |
 | 🟢 低 | F7 完整函数表（380+）/ 文档 | 按需补 |
 | 🟢 低 | T2 语料分类/NOTICE | 合规性 |
 | 🟢 低 | I4/I5 IR pretty-print/等价性 | 有 SQL golden 间接覆盖 |
+
+### 已完成（2026-06-17）
+- ✅ **`set`/`as`/`invoke` 算子 dispatch** — 三个生产 KQL 高频构造补齐（commit 7d60561），
+  附带修复 `kind` 参数名误吞 + binder Star 丢列两个深层 bug。语料 89→90（100%）。
