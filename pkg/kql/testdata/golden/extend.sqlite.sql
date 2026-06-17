@@ -1,0 +1,1 @@
+SELECT _k0.*, (_k0."damage" * ?1) AS "doubled" FROM (SELECT * FROM "events") AS _k0

@@ -1,0 +1,1 @@
+SELECT _k0."eventtype" AS "eventtype", COUNT(DISTINCT _k0."state") AS "d" FROM (SELECT * FROM "events") AS _k0 GROUP BY _k0."eventtype"

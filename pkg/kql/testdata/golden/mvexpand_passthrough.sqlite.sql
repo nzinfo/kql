@@ -1,0 +1,1 @@
+SELECT _k0.* FROM (SELECT * FROM "events") AS _k0

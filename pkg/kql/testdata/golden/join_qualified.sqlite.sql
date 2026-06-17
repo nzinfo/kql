@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT * FROM "events") AS _k0 INNER JOIN (SELECT * FROM "meta") AS _k0_j ON (_k0."id" = _k0_j."id")

@@ -1,0 +1,1 @@
+SELECT _k0.*, CAST(_k0."damage" AS TEXT) AS "s" FROM (SELECT * FROM "events") AS _k0

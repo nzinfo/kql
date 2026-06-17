@@ -1,0 +1,1 @@
+SELECT _k0.*, CASE WHEN (_k0."damage" > ?1) THEN ?2 ELSE ?3 END AS "big" FROM (SELECT * FROM "events") AS _k0

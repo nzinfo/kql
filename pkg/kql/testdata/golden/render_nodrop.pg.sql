@@ -1,0 +1,1 @@
+SELECT _k0.* FROM (SELECT * FROM (SELECT * FROM "events") AS _k0 LIMIT 1) AS _k0

@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT * FROM (SELECT * FROM "events") AS _k0 ORDER BY _k0."damage" DESC) AS _k0 LIMIT ?1

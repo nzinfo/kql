@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT * FROM "events") AS _k0 WHERE (_k0."eventtype" ILIKE ('%' || $1 || '%'))

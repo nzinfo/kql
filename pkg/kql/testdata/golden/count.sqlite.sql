@@ -1,0 +1,1 @@
+SELECT COUNT(*) AS "Count_" FROM (SELECT * FROM "events") AS _k0

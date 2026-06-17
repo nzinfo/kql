@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT * FROM "events") AS _k0 WHERE ((_k0."state" = ?1) AND (_k0."damage" > ?2))
