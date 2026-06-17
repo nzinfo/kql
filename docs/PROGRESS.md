@@ -17,7 +17,7 @@
 | **I2** AST→IR 翻译器 | `_next_` | `internal/ir/translate*.go`（P0 算子，字符串列名占位） | 端到端翻译 + 类型/聚合 ✅ |
 | **B1/B5-min** sqlite 后端 + **pkg/kql** | `4fe4fde` | `internal/backend/` + `sqlite/`（emit IR→SQL）+ `pkg/kql`（Exec API） | **e2e 最小闭环 ✅**：内存 sqlite 建表→KQL→取结果 |
 | **S5-min** CLI | `e77416e` | `cmd/kql/`（main/output/ir：run/validate/explain + csv/json/table） | **命令行可跑 ✅** |
-| **T1–T3-min** 语料回归 | `_next_` | `pkg/kql/testdata/corpus/sentinel/`（89 真实查询）+ `corpus_test.go` | **parse→translate→emit 覆盖 93%**（39%→72%→93%；P1/P2 算子 + 函数管道参数） |
+| **T1–T3** 语料回归 | `_next_` | `pkg/kql/testdata/corpus/sentinel/`（89 真实查询）+ `corpus_test.go` | **parse→translate→emit 覆盖 100%**（39%→72%→93%→99%→100%；P1/P2 算子 + lambda + datatable + union-as-fn + project-away 等） |
 | **F7-min** builtin 函数表 | `_next_` | `internal/frontend/builtin/`（Spec 表 + SQLite 模板）+ emit 接线 + 执行测试 | **常见函数能执行**：ago/tostring/iff/dcount/countif/make_set/strcat/coalesce/sum/avg/...（9 个执行用例全绿） |
 | **F5** binder + **ColID 绑定** | `_next_` | `internal/frontend/binder/`（Schema→ColBinding + 大小写不敏感 Lookup + ColID 分配 + 物理名回写）| **pg 大小写折叠根治**：`EventType` 在 pg 存为 `eventtype` 也能正确解析执行（DESIGN §5 落地） |
 | **O0** stats catalog | `_next_` | `internal/optimizer/stats/`（Catalog/Table/ColumnStats/Index/CorrVs/CostModel + 置信度 + YAML 加载器）+ 示例 + 10 单测 | **统计描述可加载**：pg_analyze/manual/sampling 源、缺字段降级、CorrVs 可选、未知字段告警 |

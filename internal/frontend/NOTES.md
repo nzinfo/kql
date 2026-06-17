@@ -239,8 +239,8 @@ let 的 RHS 若无 `|`，回退为纯标量 Expr（`let n = 5` 的 Expr 是 Basi
 提取器用 go/ast walker，见 `testdata/corpus/README.md`。
 
 **回归测试**：`pkg/kql/corpus_test.go`
-- `TestCorpusCoverage`：全量 89 个查询过 parse→translate→emit，记录通过率（**当前 83/89 = 93%**）。
-- `TestCorpusP0Subset`：排除 P1+ 算子（parse/mv-expand/make-series/consume/getschema/...）后的 P0 子集，要求 ≥90%（**当前 65/67 = 97%**）。
+- `TestCorpusCoverage`：全量 89 个查询过 parse→translate→emit，记录通过率（**当前 89/89 = 100%**）。
+- `TestCorpusP0Subset`：排除 P1+ 算子（parse/mv-expand/make-series/consume/getschema/...）后的 P0 子集，要求 ≥90%（**当前 67/67 = 100%**）。
 - 这两个测试是 parser/translator 的回归护栏：任何能解析的查询不能因为重构而退步。
 
 **一轮修复（39%→72%，2026-06-17）从语料挖出的真实缺口**：
@@ -274,8 +274,10 @@ parse 的 regex 抽取）留到各后端线 + NeedsPostProc 标记时实现。
 - ✅ **`externaldata(col:type,...)[storage] with(...)`**（72）：同上 `:type` 跳过 + source 翻译。
 - ✅ **`mv-expand ... to typeof(double)`**（11）：parseMvExpandOp 跳 `to <type>` 子句。
 - ✅ **`\` 字符**（54）：lexer 对游离 `\`（JSON 转义残留）宽容跳过，不 fatal。
-- ⏳ **`union isfuzzy=true (...)` 函数式 source**（02）：union 既算子又函数调用，唯一剩余失败。
-  需特殊 grammar 分支（union-as-function），留下一轮。
+- ✅ **`union isfuzzy=true (...)` 函数式 source**（02）：parseIdentFollowed 检测 keyword 后跟 `param=value` → parseKeywordSourceCall（消费 param 对 + 各 `(...)` 子查询）。
+- ✅ **`project-away`/`project-keep`/`project-rename`/`project-smart`（深层 bug）**：这 4 个算子有 token 常量但 **parser 从未 dispatch**——被 union 失败掩盖的真 bug。统一进 PROJECT 分发。
+
+**语料 100%（89/89）达成。**
 
 ## 7. builtin 函数表（F7）
 

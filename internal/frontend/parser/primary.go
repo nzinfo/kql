@@ -106,12 +106,69 @@ func (p *Parser) parsePrimary() ast.Expr {
 
 // parseIdentFollowed parses an identifier (or keyword-as-name) possibly
 // followed by a call `(...)`. The result is an *ast.Ident or *ast.CallExpr.
+// parseIdentFollowed parses an identifier (or keyword-as-name) possibly
+// followed by a call `(...)`. KQL also has source-form keywords that take
+// params BEFORE the call parens, e.g. `union isfuzzy=true (sub1) (sub2)` —
+// for those, the leading `param=value` pairs are consumed as named args of a
+// synthetic call so the whole form parses.
 func (p *Parser) parseIdentFollowed() ast.Expr {
 	name := p.parseIdentLike()
+	// Direct call: name(args).
 	if p.cur == token.LPAREN {
 		return p.parseCall(name)
 	}
+	// Source-form keyword with leading params: `union isfuzzy=true (...)`.
+	// Detect `IDENT =` immediately after the name (a param binding), consume
+	// any param=value pairs, then if a `(` follows, parse it as a call whose
+	// args are the consumed params + the parenthesised subqueries.
+	if p.cur == token.IDENT {
+		s := p.save()
+		p.next() // peek the IDENT
+		if p.cur == token.ASSIGN {
+			// It's a param=value form — restore and parse as a keyword-source call.
+			p.restore(s)
+			return p.parseKeywordSourceCall(name)
+		}
+		p.restore(s)
+	}
 	return name
+}
+
+// parseKeywordSourceCall handles source-form keywords that take params before
+// their subquery args, e.g. `union isfuzzy=true (T1 | ...) (T2 | ...)`. The
+// params are consumed as named-arg bindings; each subsequent `(...)` is a
+// subquery argument. The result is a CallExpr so downstream code sees a
+// uniform shape.
+func (p *Parser) parseKeywordSourceCall(name *ast.Ident) ast.Expr {
+	lparen := p.pos // synthetic — there's no literal `(` yet; use name pos
+	_ = lparen
+	var args []ast.Expr
+	// Consume `param=value` pairs.
+	for p.cur == token.IDENT {
+		s := p.save()
+		paramName := p.parseIdentLike()
+		if p.cur != token.ASSIGN {
+			p.restore(s)
+			break
+		}
+		assign := p.pos
+		p.next()
+		val := p.ParseExpr()
+		args = append(args, &ast.NamedExpr{Name: paramName, Assign: assign, Expr: val})
+	}
+	// Consume each `(...)` subquery as an argument.
+	for p.cur == token.LPAREN {
+		if p.isParenPipeline() {
+			lp := p.pos
+			p.next()
+			pipe := p.parsePipeline()
+			rp := p.expect(token.RPAREN)
+			args = append(args, &ast.ParenExpr{Lparen: lp, X: pipe, Rparen: rp})
+		} else {
+			args = append(args, p.ParseExpr())
+		}
+	}
+	return &ast.CallExpr{Fun: name, Lparen: name.Pos(), Args: args, Rparen: name.Pos()}
 }
 
 // parseCall parses the argument list of a function call. name is the function

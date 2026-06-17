@@ -38,7 +38,7 @@ func (p *Parser) parsePipedOperator() ast.Operator {
 	switch p.cur {
 	case token.WHERE, token.FILTER:
 		return p.parseWhereOp(pipePos)
-	case token.PROJECT:
+	case token.PROJECT, token.PROJECTAWAY, token.PROJECTKEEP, token.PROJECTRENAME, token.PROJECTREORDER, token.PROJECTSMART:
 		return p.parseProjectOp(pipePos)
 	case token.EXTEND:
 		return p.parseExtendOp(pipePos)
@@ -58,8 +58,6 @@ func (p *Parser) parsePipedOperator() ast.Operator {
 		return p.parseCountOp(pipePos)
 	case token.TOP:
 		return p.parseTopOp(pipePos)
-	case token.PROJECTREORDER:
-		return p.parseProjectReorderOp(pipePos)
 	// P1 operators
 	case token.MVEXPAND:
 		return p.parseMvExpandOp(pipePos)

@@ -83,16 +83,7 @@ func (p *Parser) parseTopOp(pipePos token.Pos) *ast.TopOp {
 	return &ast.TopOp{Pipe: pipePos, Top: opPos, Count: count, ByPos: byPos, Orders: orders, Params: params}
 }
 
-// parseProjectReorderOp: `| project-reorder c1, c2, *` (g4 projectReorderOperator).
-// Semantics: reorder output columns so the named ones come first (others
-// unchanged). For the minimal path we PARSE it (so real queries don't fail)
-// and model it as a Project over the named columns — full reordering needs the
-// F5 binder (which knows the full input schema). The emit produces a SELECT of
-// those columns, which is lossy but keeps parse/translate/emit green until the
-// binder lands; flagged in NOTES.
-func (p *Parser) parseProjectReorderOp(pipePos token.Pos) *ast.ProjectOp {
-	opPos := p.pos
-	p.next() // consume project-reorder
-	cols := p.parseNamedExprList()
-	return &ast.ProjectOp{Pipe: pipePos, Project: opPos, Columns: cols}
-}
+// (project-reorder is now parsed by parseProjectOp via the unified
+// PROJECT/PROJECTAWAY/.../PROJECTREORDER dispatch in pipeline.go — same
+// column-list syntax. The separate handler was removed when the dispatch
+// was consolidated.)

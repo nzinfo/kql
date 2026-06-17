@@ -133,12 +133,9 @@ func TestCorpusCoverage(t *testing.T) {
 		}
 	}
 
-	// Regression baseline: the parser must handle at least this fraction of
-	// real-world queries. Bumped to 97% after the P2 round (lambda/datatable/
-	// externaldata/mv-expand-to/mv-expand typeof/\-lenience). The single
-	// remaining failure is the exotic `union isfuzzy=true (...)` function-form
-	// source (02_KerberoastingDetection) — tracked in frontend/NOTES.md §6.
-	const minPassRate = 0.97
+	// Regression baseline: 100% — all 89 real-world queries parse+translate+emit
+	// clean. Any regression that drops this is a real parser/translator bug.
+	const minPassRate = 1.0
 	if got := float64(passed) / float64(total); got < minPassRate {
 		t.Errorf("corpus pass rate %.0f%% below baseline %.0f%% — regression or corpus grew; investigate failing queries", 100*got, 100*minPassRate)
 	}
