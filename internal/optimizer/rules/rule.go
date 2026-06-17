@@ -13,7 +13,9 @@
 package rules
 
 import (
+	"nzinfo/kql/internal/frontend/token"
 	"nzinfo/kql/internal/ir"
+	"nzinfo/kql/internal/optimizer/cost"
 	"nzinfo/kql/internal/optimizer/stats"
 )
 
@@ -95,32 +97,31 @@ func (e *Engine) Optimize(pipe *ir.Pipeline) (*ir.Pipeline, int) {
 	return pipe, totalChanges
 }
 
-// CatalogStatsReader adapts a *stats.Catalog into a rules.StatsReader for
-// selectivity-aware rules. Selectivity uses the column's cardinality vs the
-// table's row count as a rough estimate (higher cardinality → more selective
-// equality). Returns 0 (unknown) if the column/table isn't in the catalog.
+// CatalogStatsReader adapts a *stats.Catalog into a rules.StatsReader using
+// the O1 selectivity estimator (MCV/range/IN/AND/OR — the DESIGN §6.3 formula
+// table) for selectivity-aware rules. Returns a noopReader (default 0) if the
+// catalog is nil.
 func CatalogStatsReader(c *stats.Catalog) StatsReader {
 	if c == nil {
 		return noopReader{}
 	}
-	return &catalogReader{c: c}
+	return &catalogReader{est: cost.NewEstimator(c)}
 }
 
-type catalogReader struct{ c *stats.Catalog }
+type catalogReader struct{ est *cost.Estimator }
 
+// Selectivity estimates a column's equality selectivity (the most common case
+// for predicate-ordering rules). For richer per-predicate selectivity, rules
+// can use cost.Estimator directly; this StatsReader keeps the rule interface
+// simple (column-level).
 func (r *catalogReader) Selectivity(table, column string) float64 {
-	t, ok := r.c.Tables[table]
-	if !ok || t.RowCount <= 0 {
-		return 0
-	}
-	col, ok := t.Columns[column]
-	if !ok || col.Card <= 0 {
-		return 0
-	}
-	// Rough equality-selectivity: 1/cardinality. Bounded to [0,1].
-	s := 1.0 / float64(col.Card)
-	if s > 1 {
-		s = 1
-	}
-	return s
+	// A column-level selectivity call from a rule typically means "how selective
+	// is an equality predicate on this column?" — model it as col = <any const>
+	// using the estimator's non-MCV path (1/card), which is the right default
+	// when the rule doesn't know the constant.
+	return r.est.Selectivity(table, &ir.BinOp{
+		Op: token.EQL,
+		X:  &ir.Col{Name: column},
+		Y:  &ir.Lit{T: ir.TypeString, HasValue: false}, // null literal → non-MCV path
+	})
 }

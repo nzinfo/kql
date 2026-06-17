@@ -97,3 +97,30 @@ manual 缺 mcv+hist = 0.6×0.5 = 0.3 < 0.5 ✓。
 **测试**：fold 7 个（算术/嵌套/恒真删/恒假→Limit0/保列引用/一元/iff）+ prune 4 个
 （终末裸列触发/无 Project 不触发/Extend 阻挡/计算列阻挡）+ 组合（Fold 后 Prune 仍触发）。
 全量 sqlite+pg e2e 验证三规则组合语义等价。
+
+## 6. O1 — 选择率估算器 + 代价模型
+
+**结构**：`internal/optimizer/cost/`
+- **selectivity.go**（O1.S1）：`Estimator` 把谓词翻成选择率 ∈ [0,1]，严格按
+  DESIGN §6.3 公式表：
+  - `col = const` ∈ MCV → MCV 频率；不在 MCV → 1/card；无统计 → 0.1（默认）
+  - `col < const` 有 hist → 1/(2×bucket_count)；无 hist → 0.33（pg 默认）
+  - `col in (...)` → Σ 单值选择率（MCV 优先，余 1/card），上限 1
+  - `col between (...)` → 0.25（双端范围粗估）
+  - AND → s1×s2（独立假设）；OR → s1+s2−s1×s2
+  - 字符串操作符（has/contains）→ 0.1（catalog 不建模子串分布）
+- **cost.go**（O1.S4）：`Cost{IO,CPU,Net,Mem}` + `Add/Scale/Total(weights)` +
+  `DefaultWeights(backend)`（pg Net 重、duckdb CPU 重、sqlite IO 重无 Net）+
+  `WeightsFromCatalog`（O0 cost_model 覆盖默认权重）。
+- **降级**（O1.S5）：nil catalog → 全 0.1 不 panic；`EstimateConfidence` 复用
+  O0 置信度，<0.5 标 LowConfidence（决策策略据此走保守路径）。
+
+**接线**：`rules.CatalogStatsReader` 升级——从粗估 `1/cardinality` 改用真
+`cost.Estimator`（走非 MCV 等值路径）。规则现在拿到 DESIGN §6.3 的精确选择率。
+
+**测试**：17 个（选择率 12：MCV 命中/非 MCV/无统计/IN 全 MCV/IN 混合/范围有 hist/
+范围无 hist/AND/OR/nil catalog/nil pred/超 1 钳位；Cost 5：Add/Scale/Total/
+默认权重差异/置信度）全绿。
+
+**不在范围**（下一轮）：O1.S2 join 选择率（`1/max(card_a,card_b)`）、
+O1.S3 corr 修正（强相关列复合谓词不严重高估）。两者都建在已落地的 Estimator 上。
