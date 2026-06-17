@@ -1,0 +1,27 @@
+# Binaries
+/bin/
+/kql
+*.exe
+*.test
+
+# Go build / test artifacts
+*.out
+coverage.txt
+coverage.html
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Source-project reference repos are kept LOCAL ONLY (not committed). They are
+# independent upstream git repos used as read-only references; our code does not
+# import them. See claude.md §3. Each developer vendors them locally under
+# .source-projects/ as needed.
+.source-projects/
+
+# Local env
+.env
+.env.local
