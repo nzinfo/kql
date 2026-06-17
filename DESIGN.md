@@ -17,12 +17,13 @@
 
 | 维度 | 选择 | 理由 |
 |---|---|---|
-| 实现语言 | **Go** | cgo 接 sqlite/duckdb；pg 走 pgx 纯 Go 驱动 |
+| 实现语言 | **Go** | pg 走 pgx 纯 Go 驱动；duckdb 走 cgo；sqlite 用纯 Go 驱动（见 sqlite 定位） |
 | 前端路线 | **手写递归下降**（仿 kqlparser） | 无 ANTLR 运行时依赖，可控 |
 | 语法权威 | 官方 `Kusto-Query-Language/grammar/Kql.g4` | 唯一基准 |
-| 执行路线 | **统一 IR + 多方言后端** | 一套 KQL，三后端可切换 |
+| 执行路线 | **统一 IR + 多方言后端** | 一套 KQL，多后端可切换 |
 | 翻译策略 | **最终执行性能最大化** | 能合进单 SELECT 就合；难表达的算子才断开为 CTE/UDF |
-| 主后端 | **PostgreSQL** | sqlite/duckdb 为辅 |
+| 主后端 | **PostgreSQL** | 生产主力；duckdb 为分析加速后端 |
+| sqlite 定位 | **仅原型 / 框架测试** | 不是生产后端；用于无外部依赖的 e2e 验证、单元测试、框架冒烟。纯 Go 驱动（modernc.org/sqlite）免 cgo，便于交叉编译与 CI |
 | UDF 策略 | 必要时才引入（pg 走 plpgsql） | 避免污染 schema |
 | 优化器 | **基于预定义统计描述的代价感知**，可切换决策策略 | 跨后端统一、可版本管理、不依赖运行时查系统表 |
 
@@ -51,7 +52,7 @@
 │  后端 (internal/backend/)  IR → 方言最优 SQL/Plan         │
 │   ├─ pg/      (主) pgx + 生 SQL, UDF 走 plpgsql          │
 │   ├─ duckdb/  (辅) duckdb-go, 列式友好                   │
-│   └─ sqlite/  (辅) mattn/go-sqlite3, 单机零依赖          │
+│   └─ sqlite/  (原型/测试) modernc.org/sqlite 纯Go，仅原型/测试          │
 ├─────────────────────────────────────────────────────────┤
 │  执行代理 (internal/exec/)  接 driver.DB, 拉回 Arrow      │
 └─────────────────────────────────────────────────────────┘
@@ -334,7 +335,7 @@ kql/
 ## 11. 取舍说明
 
 1. **为什么不仿 rust-kql 直接生成 DataFusion plan？** 主后端是 pg——pg 没有列式 plan API，必须走 SQL 文本。所以 IR 设计成"易生 SQL"。
-2. **为什么 IR 在优化器层做重写而不是各后端做？** 三后端共享同一组 pass，避免三份代码；后端只管"把 IR 翻成方言最优文本"。
+2. **为什么 IR 在优化器层做重写而不是各后端做？** 各后端共享同一组 pass，避免重复代码；后端只管把 IR 翻成方言最优文本。
 3. **为什么不直接 AST→SQL？** 要"最终性能最大化"，必须做谓词下推/列裁剪/聚合折叠——这些重写在 AST 上做极痛苦。IR 不可省。
 4. **UDF 何时引入？** 仅当某函数/算子在目标引擎无法用纯 SQL 表达（pg 的 percentile、series_*、自定义聚合）。
 5. **为什么用 YAML 而不是运行时查系统表？** "预定义为主"。YAML 让 DBA 显式声明、可版本管理、跨环境一致；pg_stats 采集脚本可作为生成 YAML 的工具，不进入运行时热路径。

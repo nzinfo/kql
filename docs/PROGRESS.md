@@ -15,15 +15,22 @@
 | **F4** parser tabular P0 | `e1aaf45` | `parser/`（pipeline + 全部 P0 算子）+ keyword round-trip 审计 | 完整 P0 查询解析到 AST ✅ |
 | **I1** IR 核心 | `_next_` | `internal/ir/`（Pipeline/Stage/Source/Expr/Type/ColID/Caps/Visitor） | 接口断言 + visitor 覆盖 ✅ |
 | **I2** AST→IR 翻译器 | `_next_` | `internal/ir/translate*.go`（P0 算子，字符串列名占位） | 端到端翻译 + 类型/聚合 ✅ |
-| **B1/B5-min** sqlite 后端 + **pkg/kql** | `_next_` | `internal/backend/` + `sqlite/`（emit IR→SQL）+ `pkg/kql`（Exec API） | **e2e 最小闭环 ✅**：内存 sqlite 建表→KQL→取结果 |
+| **B1/B5-min** sqlite 后端 + **pkg/kql** | `4fe4fde` | `internal/backend/` + `sqlite/`（emit IR→SQL）+ `pkg/kql`（Exec API） | **e2e 最小闭环 ✅**：内存 sqlite 建表→KQL→取结果 |
+| **S5-min** CLI | `_next_` | `cmd/kql/`（main/output/ir：run/validate/explain + csv/json/table） | **命令行可跑 ✅**：`kql -d <dsn> '<query>'`、`explain`、`validate` |
 
-**🎉 当前能力（e2e 最小闭环已打通）**：
+**🎉 当前能力（e2e 最小闭环 + CLI 已打通）**：
 ```go
 res, _ := kql.Exec(ctx, ":memory:", `events | where state == "TEXAS" | summarize total = sum(damage) by state | sort by total desc | take 1`)
 ```
-KQL → 解析(F1-F4) → 翻译(I2) → SQLite SQL(sqlite emit) → 执行(modernc.org/sqlite) → 结构化结果。
+```bash
+kql -d events.db 'events | where state == "TEXAS" | take 10'           # csv 默认
+kql -d events.db -o json 'events | summarize c = count() by state'    # json
+kql -d events.db explain 'events | where x > 0 | take 5'              # IR + SQL，不执行
+kql validate 'events | where'                                         # 只解析，报诊断
+```
+KQL → 解析(F1-F4) → 翻译(I2) → SQLite SQL(sqlite emit) → 执行(modernc.org/sqlite) → 结构化结果 / CLI 输出。
 覆盖 where/project/extend/take/sort/summarize(含 sum/count/bin)/join/union/distinct/count/top/in/string-op。
-`go test ./...` 全绿（20+ e2e 用例 + 前端/IR 单测）。
+`go test ./...` 全绿（含 cmd/kql 的 explain/validate/run + 格式化 + 共享内存 DB e2e）。
 
 **认知持久化**：`claude.md`（导航）+ 各模块 `NOTES.md`（frontend/ir/backend 的对齐细节与坑）。
 

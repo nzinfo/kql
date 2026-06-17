@@ -87,6 +87,10 @@ type Result struct {
 	inner *backend.Result
 }
 
+// WrapResult exposes a backend.Result as a public Result. Intended for tooling
+// (e.g. the CLI's tests) that builds a Result from a backend.Result directly.
+func WrapResult(r *backend.Result) *Result { return &Result{inner: r } }
+
 // Columns returns the result columns.
 func (r *Result) Columns() []backend.ResultColumn { return r.inner.Columns }
 
