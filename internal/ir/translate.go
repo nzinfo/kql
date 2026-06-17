@@ -12,6 +12,7 @@ import (
 	"nzinfo/kql/internal/frontend/ast"
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/token"
+	"strings"
 )
 
 // Translate converts an AST node (a *ast.Script, *ast.QueryStmt, or *ast.Pipeline)
@@ -97,14 +98,13 @@ func (t *translator) translateSource(e ast.Expr) Source {
 		}
 		return sub.Source // best-effort; complex sub-pipelines handled at Join
 	case *ast.IndexExpr:
-		// datatable(Schema)[data] / externaldata(Schema)[storage] — a source
-		// form whose data literal we don't yet materialise. Surface as a
-		// placeholder SourceTable tagged with the call name so downstream
-		// stages parse; real materialisation comes with the source-form work.
+		// datatable(Schema)[data] — materialise from the inline data.
 		if call, ok := n.X.(*ast.CallExpr); ok {
-			if id, ok := call.Fun.(*ast.Ident); ok {
-				return &SourceTable{Position: n.Pos(), Table: id.Name}
+			if id, ok := call.Fun.(*ast.Ident); ok && strings.EqualFold(id.Name, "datatable") {
+				return t.materialiseDatatable(n, call)
 			}
+			// externaldata — still a placeholder (needs a URL fetcher).
+			return &SourceTable{Position: n.Pos(), Table: "externaldata"}
 		}
 		return &SourceTable{Position: n.Pos()}
 	case *ast.CallExpr:
@@ -119,7 +119,41 @@ func (t *translator) translateSource(e ast.Expr) Source {
 	return &SourceTable{Position: e.Pos()}
 }
 
-// selectorToName flattens a.b.c to "a.b.c" for a table reference display name.
+// materialiseDatatable builds a SourceDatatableLit from a datatable(Schema)[data]
+// AST expression. The schema names come from the call args (each is an Ident,
+// possibly with a `:type` already stripped by the parser). The data rows come
+// from the IndexExpr's List (flat values, nCols per row).
+func (t *translator) materialiseDatatable(idx *ast.IndexExpr, call *ast.CallExpr) Source {
+	// Extract column names from the schema args.
+	var colNames []string
+	for _, arg := range call.Args {
+		if id, ok := arg.(*ast.Ident); ok {
+			colNames = append(colNames, id.Name)
+		}
+	}
+	nCols := len(colNames)
+
+	// Extract data rows from the index list.
+	var rows [][]Expr
+	if list, ok := idx.Index.(*ast.ListExpr); ok {
+		// Flat list: chunk into rows of nCols.
+		allExprs := make([]Expr, 0, len(list.Elems))
+		for _, el := range list.Elems {
+			allExprs = append(allExprs, t.translateExpr(el))
+		}
+		for i := 0; i+nCols <= len(allExprs); i += nCols {
+			row := make([]Expr, nCols)
+			copy(row, allExprs[i:i+nCols])
+			rows = append(rows, row)
+		}
+	}
+
+	return &SourceDatatableLit{
+		Position: idx.Pos(),
+		ColNames: colNames,
+		Rows:     rows,
+	}
+}
 func selectorToName(s *ast.SelectorExpr) string {
 	switch x := s.X.(type) {
 	case *ast.Ident:

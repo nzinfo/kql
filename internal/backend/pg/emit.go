@@ -11,6 +11,7 @@ package pg
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"nzinfo/kql/internal/backend"
@@ -87,7 +88,8 @@ func emitSource(src ir.Source) (string, error) {
 	switch s := src.(type) {
 	case *ir.SourceTable:
 		return quoteIdent(s.Table), nil
-	case nil:
+	case *ir.SourceDatatableLit:
+		return pgEmitDatatableValues(s), nil
 		return "(SELECT 1)", nil
 	}
 	return "", fmt.Errorf("unsupported source %T", src)
@@ -282,4 +284,41 @@ func (e *emitter) emitNamedList(cols []*ir.NamedExpr, alias string) ([]string, e
 		}
 	}
 	return out, nil
+}
+
+// pgEmitDatatableValues emits a datatable literal as a SQL VALUES clause for pg.
+func pgEmitDatatableValues(s *ir.SourceDatatableLit) string {
+	if len(s.Rows) == 0 {
+		return "(SELECT NULL AS " + quoteIdent(s.ColNames[0]) + " WHERE 1=0)"
+	}
+	colNames := make([]string, len(s.ColNames))
+	for i, n := range s.ColNames {
+		colNames[i] = n
+	}
+	var parts []string
+	for _, row := range s.Rows {
+		var cells []string
+		for _, cell := range row {
+			cells = append(cells, pgEmitDatatableCell(cell))
+		}
+		parts = append(parts, "("+strings.Join(cells, ", ")+")")
+	}
+	return "(SELECT * FROM (VALUES " + strings.Join(parts, ", ") + ") AS _dt(" + strings.Join(colNames, ", ") + ")"
+}
+
+func pgEmitDatatableCell(e ir.Expr) string {
+	if lit, ok := e.(*ir.Lit); ok && lit.HasValue {
+		switch v := lit.Value.(type) {
+		case string:
+			return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+		case int64:
+			return strconv.FormatInt(v, 10)
+		case float64:
+			return strconv.FormatFloat(v, 'f', -1, 64)
+		case bool:
+			if v { return "TRUE" }
+			return "FALSE"
+		}
+	}
+	return "NULL"
 }

@@ -20,6 +20,7 @@ package sqlite
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"nzinfo/kql/internal/backend"
@@ -107,10 +108,39 @@ func emitSource(src ir.Source) (string, error) {
 	switch s := src.(type) {
 	case *ir.SourceTable:
 		return quoteIdent(s.Table), nil
+	case *ir.SourceDatatableLit:
+		return emitDatatableValues(s), nil
 	case nil:
 		return "(SELECT 1)", nil
 	}
 	return "", fmt.Errorf("unsupported source %T", src)
+}
+
+// emitDatatableValues emits a datatable literal as a SQL VALUES clause:
+// (VALUES (1, 'A'), (2, 'B')) AS _dt(col1, col2)
+func emitDatatableValues(s *ir.SourceDatatableLit) string {
+	if len(s.Rows) == 0 {
+		return "(SELECT NULL AS " + quoteIdent(s.ColNames[0]) + " WHERE 1=0)"
+	}
+	var parts []string
+	for _, row := range s.Rows {
+		var cells []string
+		for _, cell := range row {
+			cells = append(cells, emitDatatableCell(cell))
+		}
+		parts = append(parts, "("+strings.Join(cells, ", ")+")")
+	}
+	colNames := make([]string, len(s.ColNames))
+	for i, n := range s.ColNames {
+		colNames[i] = n
+	}
+	// SQLite doesn't support column aliases on VALUES AS _dt(Name, Value).
+		// Use: SELECT column1 AS Name, column2 AS Value FROM (VALUES ...)
+		var selectCols []string
+		for i, n := range s.ColNames {
+			selectCols = append(selectCols, fmt.Sprintf("column%d AS %s", i+1, quoteIdent(n)))
+		}
+		return "(SELECT " + strings.Join(selectCols, ", ") + " FROM (VALUES " + strings.Join(parts, ", ") + "))"
 }
 
 // emitStage wraps `inner` (the SQL producing the prior stage's rows) in a new
@@ -338,4 +368,22 @@ func (e *emitter) emitNamedList(cols []*ir.NamedExpr, alias string) ([]string, e
 		}
 	}
 	return out, nil
+}
+
+// emitDatatableCell renders an IR literal expression for use in a VALUES clause.
+func emitDatatableCell(e ir.Expr) string {
+	if lit, ok := e.(*ir.Lit); ok && lit.HasValue {
+		switch v := lit.Value.(type) {
+		case string:
+			return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+		case int64:
+			return strconv.FormatInt(v, 10)
+		case float64:
+			return strconv.FormatFloat(v, 'f', -1, 64)
+		case bool:
+			if v { return "1" }
+			return "0"
+		}
+	}
+	return "NULL"
 }
