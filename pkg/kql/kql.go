@@ -19,6 +19,7 @@ import (
 
 	"nzinfo/kql/internal/backend"
 	"nzinfo/kql/internal/backend/sqlite"
+	"nzinfo/kql/internal/frontend/binder"
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/parser"
 	"nzinfo/kql/internal/ir"
@@ -41,10 +42,26 @@ func Exec(ctx context.Context, dsn, query string) (*Result, error) {
 // ExecOn runs a KQL query against an already-open backend. The caller owns the
 // backend's lifecycle. This is the backend-agnostic entry point; Exec is the
 // SQLite convenience wrapper.
+//
+// If the backend also implements binder.SchemaProvider (the sqlite backend
+// does), column references are validated at bind time — producing friendly
+// KQL009 "column not found" errors with KQL context BEFORE execution, rather
+// than a raw SQLite "no such column" at runtime.
 func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, error) {
 	pipe, err := ParseTranslate(query)
 	if err != nil {
 		return nil, err
+	}
+	// Bind: validate column references against the source schema (if the
+	// backend can provide one). Bind errors are surfaced like parse errors.
+	var diags diagnostic.List
+	if prov, ok := bk.(binderProvider); ok {
+		if _, berr := binder.Bind(pipe, prov, &diags); berr != nil {
+			return nil, fmt.Errorf("bind: %w", berr)
+		}
+		if diags.HasErrors() {
+			return nil, &Error{diags: diags, stage: "bind"}
+		}
 	}
 	q, err := bk.Emit(pipe)
 	if err != nil {
@@ -55,6 +72,15 @@ func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, err
 		return nil, fmt.Errorf("exec: %w", err)
 	}
 	return &Result{r}, nil
+}
+
+// binderProvider is the optional interface a backend implements to enable
+// bind-time column validation. Defined locally (not imported as
+// binder.SchemaProvider) to avoid pkg/kql depending on an internal sub-package
+// type by name in its public surface — but it's structurally identical, so the
+// sqlite backend satisfies it via its Schema method returning *binder.Schema.
+type binderProvider interface {
+	Schema(table string) (*binder.Schema, error)
 }
 
 // ParseTranslate parses a KQL query and translates it to IR, returning the

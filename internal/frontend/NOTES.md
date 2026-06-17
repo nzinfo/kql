@@ -298,3 +298,20 @@ make_set→group_concat(DISTINCT)、toint→CAST AS INTEGER、isnotempty→(x!='
 导致后续 `sort by state` 找不到列（"no such column"）。**修**：裸 *ir.Col 的
 group key 用原列名做别名（`state AS state`）；只有计算表达式且无名的 key 才用
 `key%d`。这是跨 stage 列解析的权宜——真正解决要 F5 binder 跟踪每 stage 的输出 schema。
+
+## 9. F5 binder（最小版：schema 流 + 友好列报错）
+
+**结构**：`internal/frontend/binder/binder.go`
+- `Schema{Cols []string}` —— 一个 stage 的输出列集；`Has(name)` 大小写敏感（KQL 标识符大小写敏感，严格匹配以暴露笔误）。
+- `SchemaProvider` 接口：`Schema(table) → (*Schema, error)`。sqlite backend 用 `PRAGMA table_info` 实现（`internal/backend/sqlite/schema.go`）。
+- `Bind(pipe, prov, diags)`：walk pipeline，每 stage 线程化输出 schema：Filter/Limit/Sort/Distinct 透传输入 schema；Project 输出投影列；Extend 输入+新增列；Aggregate 输出 keys+named-aggs（**丢掉未分组/未聚合的列**，这是 summarize 语义的关键）。
+- 每个 `*ir.Col` 引用按当前 schema 校验，未知列报 `KQL001: column "X" not found in current scope`。
+
+**接线**：`pkg/kql.ExecOn` 在 translate 后、emit 前调 `Bind`（backend 若实现 SchemaProvider 才校验，否则放行）。bind 错误走和 parse 错误一样的 `kql.Error{stage:"bind"}` 路径。
+
+**关键权衡**：
+- **不做 ColID 物理绑定**：emit 仍用字符串列名（已在 e2e 跑通）。binder 是**校验器**不是重写器，最小化对现有 emit 的扰动。
+- **join 列消歧暂留**：join 后的 schema 近似为左表 schema（不 union 左+右），emit 仍左偏。这是**已知限制**——真消歧要 union schema + 给同名列加限定，留下一轮（涉及 IR ColID 绑定）。
+- **nil provider 放行**：无法 introspect schema 的 source（如动态生成的表），binder 不报未知列，只透传。保证不过度拒错。
+
+**测试覆盖**（`binder_test.go`）：已知列/未知列/缺表/nil放行/project-去列/extend-加列/summarize-输出去未聚合列/schema.Has。
