@@ -26,6 +26,7 @@
 | **O5** 代价基准 + --stats | `_next_` | `pkg/kql/opt_bench_test.go`（optimizer ~3.9µs < parse）+ CLI `--stats` 接 O0 catalog + 示例 catalog | **优化器闭环用户可见**：`--stats <yaml> --policy gated` → 加载统计 → 选择率 → 谓词重排 + 决策日志 |
 | **O2** 核心规则 | `_next_` | `internal/optimizer/rules/`（RewriteRule + Engine 不动点 + PredicatePushdown + ConstantFold + ColumnPrune）+ CatalogStatsReader | **三条核心规则生效**：谓词下推、常量折叠（where 1=1 删/where 1=0→空）、列裁剪（sqlite+pg e2e 语义等价验证） |
 | **B2-min** pg 后端 | `_next_` | `internal/backend/pg/`（emit $N 占位符 + ILIKE + pg 函数）+ docker-compose.pg.yml + 10 pg e2e | **首次连真实生产库**：KQL → Docker PostgreSQL（pgx 纯 Go），10 用例全绿（sourceOnly/where/take/summarize/sort/distinct/in/ILIKE/binder） |
+| **B4** duckdb 后端 | `_next_` | `internal/backend/duckdb/`（复用 pg emit，duckdb-go v2 驱动）+ 10 e2e + 24 golden | **第三后端**：in-process 列式 DuckDB（无需 Docker），10 用例全绿 |
 
 **🎉 当前能力（e2e 最小闭环 + CLI 已打通）**：
 ```go

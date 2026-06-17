@@ -88,6 +88,14 @@ func TestGolden(t *testing.T) {
 				}
 				compareGolden(t, tc.name+".pg.sql", normaliseSQL(q.SQL))
 			})
+			// duckdb snapshot (reuses pg's emitter — DuckDB SQL is pg-compatible).
+			t.Run("duckdb", func(t *testing.T) {
+				q, err := pg.Emit(pipePg) // same emit as pg
+				if err != nil {
+					t.Fatalf("duckdb.Emit: %v", err)
+				}
+				compareGolden(t, tc.name+".duckdb.sql", normaliseSQL(q.SQL))
+			})
 		})
 	}
 }

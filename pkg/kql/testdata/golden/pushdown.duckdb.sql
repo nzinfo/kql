@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT _k0.*, (_k0."id" * 2) AS "x" FROM (SELECT * FROM "events") AS _k0) AS _k0 WHERE (_k0."id" > 5)

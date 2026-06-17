@@ -1,0 +1,1 @@
+SELECT _k0.*, CASE WHEN (_k0."damage" > 5000) THEN 1 ELSE 0 END AS "big" FROM (SELECT * FROM "events") AS _k0

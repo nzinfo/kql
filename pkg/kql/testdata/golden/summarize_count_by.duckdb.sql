@@ -1,0 +1,1 @@
+SELECT _k0."state" AS "state", COUNT(*) AS "c" FROM (SELECT * FROM "events") AS _k0 GROUP BY _k0."state"

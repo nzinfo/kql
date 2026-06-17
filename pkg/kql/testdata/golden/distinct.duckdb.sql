@@ -1,0 +1,1 @@
+SELECT DISTINCT _k0."state" FROM (SELECT * FROM "events") AS _k0

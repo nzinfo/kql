@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"nzinfo/kql/internal/backend"
+	"nzinfo/kql/internal/backend/duckdb"
 	"nzinfo/kql/internal/backend/pg"
 	"nzinfo/kql/internal/backend/sqlite"
 	"nzinfo/kql/internal/frontend/binder"
@@ -149,10 +150,29 @@ func Explain(ctx context.Context, dsn, query string, policyName Policy, statsPat
 }
 
 func openBackend(dsn string) (backend.Backend, error) {
+	if isDuckDBDSN(dsn) {
+		return duckdb.New(duckDBPath(dsn))
+	}
 	if isPgDSN(dsn) {
 		return pg.New(dsn)
 	}
 	return sqlite.New(dsn)
+}
+
+// isDuckDBDSN reports whether dsn refers to DuckDB (duckdb:// prefix or a
+// .duckdb file path).
+func isDuckDBDSN(dsn string) bool {
+	low := strings.ToLower(dsn)
+	return strings.HasPrefix(low, "duckdb://") || strings.HasSuffix(low, ".duckdb")
+}
+
+// duckDBPath extracts the DuckDB path from a dsn (strips duckdb:// prefix;
+// returns "" for in-memory).
+func duckDBPath(dsn string) string {
+	if strings.HasPrefix(strings.ToLower(dsn), "duckdb://") {
+		return dsn[len("duckdb://"):]
+	}
+	return dsn
 }
 
 // isPgDSN reports whether dsn refers to a PostgreSQL database.

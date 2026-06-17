@@ -228,11 +228,14 @@ func TestPg_JoinQualified(t *testing.T) {
 	}
 }
 
-// int64Val coerces a pg-returned integer-ish cell.
+// int64Val coerces a driver-returned integer-ish cell (handles int32 from
+// DuckDB, int64 from pg, etc).
 func int64Val(v interface{}) int64 {
 	switch x := v.(type) {
 	case int64:
 		return x
+	case int32:
+		return int64(x)
 	case int:
 		return int64(x)
 	case float64:

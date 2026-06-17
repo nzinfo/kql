@@ -1,0 +1,1 @@
+SELECT _k0."state" AS "s", _k0."damage" AS "d" FROM (SELECT * FROM "events") AS _k0
