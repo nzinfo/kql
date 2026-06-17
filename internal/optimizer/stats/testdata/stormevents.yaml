@@ -1,0 +1,49 @@
+version: "1"
+source: pg_analyze
+schema: public
+
+tables:
+  StormEvents:
+    row_count: 1000000
+    avg_row_bytes: 240
+    columns:
+      State:
+        card: 62
+        nulls: 0
+        type: string
+        mcv:
+          values: ["TEXAS", "KANSAS", "OKLAHOMA", "FLORIDA"]
+          frequencies: [0.08, 0.06, 0.05, 0.04]
+        hist:
+          kind: equi_freq
+          bounds: ["ALABAMA", "GEORGIA", "MASSACHUSETTS", "OHIO", "TEXAS", "WYOMING"]
+      DamageProperty:
+        card: 95000
+        nulls: 5000
+        type: real
+        hist:
+          kind: equi_freq
+          bounds: ["0", "100", "1000", "10000", "100000", "1000000"]
+      EventType:
+        card: 48
+        nulls: 0
+        type: string
+        mcv:
+          values: ["Hail", "Thunderstorm Wind", "Flash Flood"]
+          frequencies: [0.30, 0.20, 0.10]
+    indexes:
+      - name: idx_state
+        columns: [State]
+      - name: idx_event_type_state
+        columns: [EventType, State]
+        include: [DamageProperty]
+
+views:
+  RecentStorms:
+    definition: "StormEvents | where StartTime > ago(30d)"
+
+cost_model:
+  seq_page_cost: 1.0
+  random_page_cost: 4.0
+  cpu_tuple_cost: 0.01
+  cache_hit_rate: 0.0
