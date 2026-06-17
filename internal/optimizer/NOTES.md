@@ -71,3 +71,29 @@ manual 缺 mcv+hist = 0.6×0.5 = 0.3 < 0.5 ✓。
 
 **下一轮**（O2.S3/S4）：ColumnPrune（投影裁剪）、ConstantFold（`where 1=1` 删除、
 `where 1=0` → EmptyResult）。
+
+## 5. O2.S3 + O2.S4 — ColumnPrune + ConstantFold
+
+**ConstantFold**（`constant_fold.go`）：
+- 常量折叠：`1 + 2`→`3`、`-(1+2)`→`-3`（递归进 BinOp/UnaryOp/FuncCall/Case/List）。
+- 谓词简化：`where 1 == 1`/`where true`→**filter 删除**；`where 1 == 0`/`where false`→
+  **替换为 Limit 0**（空结果，比物化后过滤便宜）。
+- `iff(true,a,b)`→`a`、`iff(false,a,b)`→`b`；`CASE WHEN true`→then 分支。
+- 安全：只折叠两侧都是字面量的子表达式，**绝不**丢弃列引用。
+
+**ColumnPrune**（`column_prune.go`）：
+- 终末 Project 全是裸列引用 + 中间全是 passthrough（Filter/Sort/Limit/Distinct）→
+  在 source 后插入一个 Project 投影所需列（含中间 Filter 引用的额外列），让 DB 少读列。
+- **不触发**：Extend/Aggregate/Project 介入（会增列/改列）、终末 Project 有计算列
+  （source 算不出）、无终末 Project。
+- 保守版：没有 schema 时不能断言"严格子集"，所以只在能明确确定所需列集时触发。
+  全列溯源（PhysicalPlan）留后续。
+
+**defaultEngine 规则序**：`ConstantFold → PredicatePushdown → ColumnPrune`。
+- 先 Fold：让恒真/恒假谓词短路，减少 Pushdown/Prune 要处理的 stage。
+- 再 Pushdown：谓词推到 source 前。
+- 最后 Prune：基于最终谓词集裁列。
+
+**测试**：fold 7 个（算术/嵌套/恒真删/恒假→Limit0/保列引用/一元/iff）+ prune 4 个
+（终末裸列触发/无 Project 不触发/Extend 阻挡/计算列阻挡）+ 组合（Fold 后 Prune 仍触发）。
+全量 sqlite+pg e2e 验证三规则组合语义等价。

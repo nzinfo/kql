@@ -111,9 +111,16 @@ func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, err
 	return &Result{r}, nil
 }
 
-// defaultEngine is the standard rule engine applied to every query. Currently
-// PredicatePushdown; more rules (ColumnPrune, ConstantFold) land with O2.S3/S4.
-var defaultEngine = rules.NewEngine(rules.PredicatePushdown{})
+// defaultEngine is the standard rule engine applied to every query:
+// PredicatePushdown, ConstantFold, ColumnPrune. More rules land as O2 grows.
+// Order matters: ConstantFold before Pushdown lets a folded-away filter
+// short-circuit; Pushdown before ColumnPrune so pruned columns reflect the
+// final predicate set.
+var defaultEngine = rules.NewEngine(
+	rules.ConstantFold{},
+	rules.PredicatePushdown{},
+	rules.ColumnPrune{},
+)
 
 // binderProvider is the optional interface a backend implements to enable
 // bind-time column validation. Defined locally (not imported as
