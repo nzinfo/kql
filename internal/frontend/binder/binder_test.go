@@ -235,3 +235,160 @@ type notFoundErr struct{ table string }
 
 func (e *notFoundErr) Error() string { return "table " + e.table + " not found" }
 func errNotFound(table string) error { return &notFoundErr{table: table} }
+
+// --- F5.S6 function call validation (KQL003/KQL004) ---
+
+// hasDiagCode reports whether diags contains an item with the given code.
+func hasDiagCode(t *testing.T, diags *diagnostic.List, code diagnostic.Code) bool {
+	t.Helper()
+	for _, d := range diags.Items() {
+		if d.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// fnCall builds an *ir.FuncCall with the given name and arg expressions.
+func fnCall(name string, args ...ir.Expr) *ir.FuncCall {
+	return &ir.FuncCall{Name: name, Args: args}
+}
+
+// TestFuncValidation_KnownGood: a catalogued function with correct arity emits
+// NO diagnostics (neither KQL003 nor KQL004).
+func TestFuncValidation_KnownGood(t *testing.T) {
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "s", Expr: fnCall("tostring", col("id"))},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": cols("id")}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatal(err)
+	}
+	if diags.Has() {
+		t.Errorf("expected no diagnostics for tostring(id), got: %v", diags.Render())
+	}
+}
+
+// TestFuncValidation_UnknownFunction: a function not in the catalog emits KQL003
+// as a WARNING (not an error - unknown functions are often user-defined).
+func TestFuncValidation_UnknownFunction(t *testing.T) {
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: fnCall("my_custom_udf", col("id"))},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": cols("id")}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagCode(t, &diags, diagnostic.UnknownFunction) {
+		t.Errorf("expected KQL003 UnknownFunction for my_custom_udf, got: %v", diags.Render())
+	}
+	// CRITICAL: it must be a warning, not an error - so HasErrors stays false
+	// and execution is not blocked (the corpus uses many pass-through functions).
+	if diags.HasErrors() {
+		t.Errorf("KQL003 must be a warning, not an error: %v", diags.Render())
+	}
+}
+
+// TestFuncValidation_TooFewArgs: a catalogued function called with fewer than
+// MinArgs emits KQL004 (warning).
+func TestFuncValidation_TooFewArgs(t *testing.T) {
+	// strcat has MinArgs=1; calling it with 0 args violates arity.
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: fnCall("strcat")},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": cols("id")}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagCode(t, &diags, diagnostic.ArgCount) {
+		t.Errorf("expected KQL004 ArgCount for strcat() with 0 args, got: %v", diags.Render())
+	}
+	if diags.HasErrors() {
+		t.Errorf("KQL004 must be a warning, not an error: %v", diags.Render())
+	}
+}
+
+// TestFuncValidation_TooManyArgs: a catalogued function called with more than
+// MaxArgs emits KQL004 (warning).
+func TestFuncValidation_TooManyArgs(t *testing.T) {
+	// tostring has MaxArgs=1; calling it with 2 args violates arity.
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: fnCall("tostring", col("id"), lit(1))},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": cols("id")}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagCode(t, &diags, diagnostic.ArgCount) {
+		t.Errorf("expected KQL004 ArgCount for tostring(x,y), got: %v", diags.Render())
+	}
+	if diags.HasErrors() {
+		t.Errorf("KQL004 must be a warning, not an error: %v", diags.Render())
+	}
+}
+
+// TestFuncValidation_VariadicOk: a variadic function (MaxArgs < 0) with many
+// args emits no KQL004. strcat is variadic (MinArgs=1, MaxArgs=-1).
+func TestFuncValidation_VariadicOk(t *testing.T) {
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: fnCall("strcat", col("id"), col("id"), col("id"), col("id"))},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": cols("id")}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatal(err)
+	}
+	if hasDiagCode(t, &diags, diagnostic.ArgCount) {
+		t.Errorf("variadic strcat with 4 args should not emit KQL004: %v", diags.Render())
+	}
+}
+
+// TestFuncValidation_CaseInsensitive: catalog lookup is case-insensitive
+// (STRCAT == strcat), so uppercased calls do not false-trigger KQL003.
+func TestFuncValidation_CaseInsensitive(t *testing.T) {
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: fnCall("TOSTRING", col("id"))},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": cols("id")}}
+	var diags diagnostic.List
+	if _, err := Bind(pipe, prov, &diags); err != nil {
+		t.Fatal(err)
+	}
+	if hasDiagCode(t, &diags, diagnostic.UnknownFunction) {
+		t.Errorf("TOSTRING should resolve case-insensitively (no KQL003): %v", diags.Render())
+	}
+}

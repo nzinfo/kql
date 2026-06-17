@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"nzinfo/kql/internal/frontend/builtin"
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/token"
 	"nzinfo/kql/internal/ir"
@@ -307,6 +308,7 @@ func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 	case *ir.UnaryOp:
 		b.checkExpr(n.X, in)
 	case *ir.FuncCall:
+		b.checkFuncCall(n)
 		for _, a := range n.Args {
 			b.checkExpr(a, in)
 		}
@@ -328,6 +330,46 @@ func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 	}
 }
 
+// checkFuncCall validates a function call against the builtin catalog (F5.S6).
+// Two checks:
+//   - KQL003 UnknownFunction: the name isn't in the catalog. Emitted as a
+//     WARNING because unknown functions are frequently user-defined (via let)
+//     or aggregates the catalog hasn't catalogued; the emit layer handles them
+//     via best-effort pass-through, so this must NOT block execution.
+//   - KQL004 ArgCount: the argument count is outside [MinArgs, MaxArgs]. Also a
+//     WARNING for the same reason.
+//
+// Both are skipped when there is no diagnostic sink (binder used standalone).
+func (b *binder) checkFuncCall(n *ir.FuncCall) {
+	if b.diags == nil || n == nil || n.Name == "" {
+		return
+	}
+	spec := builtin.Lookup(n.Name)
+	if spec == nil {
+		b.diagAt(n.Pos(), diagnostic.Warning, diagnostic.UnknownFunction,
+			"function %q is not in the builtin catalog (may be user-defined; will pass through)",
+			n.Name)
+		return
+	}
+	argc := len(n.Args)
+	if argc < spec.MinArgs || (spec.MaxArgs >= 0 && argc > spec.MaxArgs) {
+		b.diagAt(n.Pos(), diagnostic.Warning, diagnostic.ArgCount,
+			"function %q called with %d arg(s); expected %s",
+			n.Name, argc, arityRange(spec.MinArgs, spec.MaxArgs))
+	}
+}
+
+// arityRange renders a human-readable arity spec for KQL004 messages.
+func arityRange(min, max int) string {
+	if max < 0 {
+		return fmt.Sprintf("at least %d", min)
+	}
+	if min == max {
+		return fmt.Sprintf("%d", min)
+	}
+	return fmt.Sprintf("%d to %d", min, max)
+}
+
 func (b *binder) errorf(pos token.Pos, format string, args ...interface{}) {
 	if b.diags == nil {
 		return
@@ -335,6 +377,22 @@ func (b *binder) errorf(pos token.Pos, format string, args ...interface{}) {
 	b.diags.Add(diagnostic.Diagnostic{
 		Severity: diagnostic.Error,
 		Code:     diagnostic.UnknownColumn,
+		Pos:      token.Position{Offset: int(pos) - 1},
+		Message:  fmt.Sprintf(format, args...),
+	})
+}
+
+// diagAt records a diagnostic with a caller-chosen code and severity. Used for
+// KQL003/KQL004 (function validation) which are WARNINGS — they must not block
+// execution, because unknown functions are frequently user-defined (via let)
+// and the emit layer handles them via best-effort pass-through.
+func (b *binder) diagAt(pos token.Pos, sev diagnostic.Severity, code diagnostic.Code, format string, args ...interface{}) {
+	if b.diags == nil {
+		return
+	}
+	b.diags.Add(diagnostic.Diagnostic{
+		Severity: sev,
+		Code:     code,
 		Pos:      token.Position{Offset: int(pos) - 1},
 		Message:  fmt.Sprintf(format, args...),
 	})
