@@ -97,6 +97,34 @@
 - **本项目**：照搬 kqlparser 的 `scanString`/`scanVerbatimString`/`scanMultiLineString`，
   已校验与 g4 一致。
 
+### 2.8 表达式优先级：严格按 g4，**不沿用 token.Precedence** ⚠️ F3 关键
+
+- **g4**（`Kql.g4:883-987`）优先级阶梯（低→高）：
+  1. `logicalOrExpression` → OR
+  2. `logicalAndExpression` → AND
+  3. `equalityExpression` → `==`/`<>`/`!=` + in/!in/in~/has_any/has_all + between/!between
+  4. `relationalExpression` → `<`/`>`/`<=`/`>=`
+  5. `additiveExpression` → `+`/`-`
+  6. `multiplicativeExpression` → `*`/`/`/`%`
+  7. `stringOperatorExpression` → has/contains/startswith/.../matches regex/`=~`/`!~`/`:`（**比乘法还高！**）
+  8. `invocationExpression` → 一元 `+`/`-`（**无 not**，见 §2.9）
+  9. `functionCallOrPathExpression` → 后缀 `.`/`[]`
+  10. `primaryExpression` → 字面量/名引用/括号/datatable
+- **kqlparser `token.Precedence()` 偏差**：把字符串操作符与比较操作符放在同一层（都返回 3），
+  且 AND/OR 也混进来了。**与 g4 不符**。
+- **本项目 F3 做法**：parser **不**用 token.Precedence 做 Pratt，改用显式分层方法
+  `parseExpr → parseOr → parseAnd → parseEquality → parseRelational → parseAdditive →
+   parseMultiplicative → parseStringOp → parseUnary → parsePostfix → parsePrimary`。
+  in/between 在 equality 层特殊处理（它们带 `(...)`/`..` 范围语法）。
+  token.Precedence 在 token 包留着（不影响 lexer），但 parser 不依赖它。
+
+### 2.9 一元 `not`：KQL **没有**一元 not 运算符 ⚠️
+
+- **g4**：`invocationExpression: ('+'|'-')? functionCallOrPathExpression` —— 只有 `+`/`-`。
+  逻辑非走 **`not(...)` 函数**（builtin），不是运算符。
+- **本项目 F2 偏差**：`ast.UnaryExpr` 注释写了 `Op: ADD, SUB, or NOT` —— `NOT` 是错的。
+  **修正**：UnaryExpr 的 Op 只允许 `ADD`/`SUB`；`not()` 走 CallExpr（函数调用）。
+
 ## 3. 待办 / 遗留问题（TODO）
 
 - **DECIMAL 字面量 token**：g4 有 `DECIMALLITERAL: DECIMAL '(' ... ')'`，
@@ -117,7 +145,9 @@
 - **吞吐基线缺位**：F1 文档要求 "≥ kqlparser lexer 的 50%"，但 kqlparser 无 benchmark，
   无法量化对比。当前 ~120 MB/s 对 parser 热路径足够；待 T5 大语料上线后可重测。
 
-## 4. F1 实现进度
+## 4. 实现进度
+
+### F1 词法层 ✅ 完成
 
 | 子目标 | 状态 | 文件 |
 |---|---|---|
@@ -125,10 +155,41 @@
 | F1.S2 关键字表 + 大小写不敏感 Lookup | ✅ | `token/keywords.go` |
 | F1.S3 lexer 主循环 + Reset/File 接口 | ✅ | `lexer/lexer.go` |
 | F1.S4 字符串/数值/timespan/类型字面量分组 | ✅ | `lexer/string.go`, `lexer/number.go`, `lexer/operator.go` |
-| F1.S5 错误恢复（ErrorList 不 panic） | ✅ | `lexer/lexer.go`（ErrorList + scanTypeLiteral 等错误路径） |
+| F1.S5 错误恢复（ErrorList 不 panic） | ✅ | `lexer/lexer.go` |
 | F1.S6 throughput benchmark | ✅ | `lexer/lexer_bench_test.go`（~120 MB/s） |
 | F1.S6 流式 Reader | ⏸ 推迟（见 §3） | — |
 
-验收（来自 F1-lexer.md）：`StormEvents | where State == "TEXAS" | take 10` 切出 9 个 token，
-位置连续无重叠 —— ✅ 由 `TestAcceptanceQuery` + `TestPositionsContiguous` 保证。
-`go test ./internal/frontend/...` 全绿。
+验收：`StormEvents | where State == "TEXAS" | take 10` 切出 9 个 token，位置连续无重叠 ✅
+
+### F2 AST 骨架 ✅ 完成
+
+Node/Expr/Stmt/Operator 接口（包私有 marker 闭集）+ 全部 P0 节点 + Visitor/BaseVisitor。
+`internal/frontend/ast/`（node/literal/ref/expr/operator/stmt/visitor/visit_base）+ 测试。
+
+### F3 parser 表达式 ✅ 完成（F4 tabular 待做）
+
+| 子目标 | 状态 | 文件 |
+|---|---|---|
+| F3.S1 parser 骨架 + 错误恢复（save/restore + sync） | ✅ | `parser/parser.go` |
+| F3.S2 字面量/引用解析 | ✅ | `parser/primary.go` |
+| F3.S3 函数调用 + 命名参数 | ✅ | `parser/primary.go`（parseCall/parseArgument） |
+| F3.S4 分层二元/一元（g4 优先级阶梯） | ✅ | `parser/expr.go` |
+| F3.S5 后缀 `.`/`[]` + in/between | ✅ | `parser/expr.go`（parsePostfix/parseInList/parseBetween） |
+| F3.S6 表达式集成测试 | ✅ | `parser/expr_test.go` |
+
+**附带产出**：`internal/frontend/diagnostic/`（F6 提前到 F3 做，因为 parser 依赖）——
+Diagnostic/Severity/Code（KQL000/005/001/...）/List（Add/Dedup/HasErrors/Render）+ 测试。
+
+关键决策（详见 §2.8/§2.9）：
+- parser **不**用 token.Precedence 做 Pratt，改用显式 10 层方法链严格对齐 g4 优先级阶梯
+  （string 操作符比乘法**还高**，kqlparser 的 Precedence 把它放错了层）。
+- KQL **无**一元 not（`not()` 是函数）；UnaryExpr 只允许 +/-。
+
+⚠️ **save/restore 的关键陷阱**：lexer 每次 Scan 后已推进到 cur 的**下一个** token，
+所以 `save()` 时 `lx.Offset()` 指向 cur 之后。要回滚到 cur 重解析，必须按 `p.pos`（cur 的
+字节起始）重置 lexer（`Reset(int(pos)-1)`）再 `next()`，而不是用 `lx.Offset()`。
+见 `parser.go` 的 savedState/restore。这条踩过坑，记下来防再犯。
+
+### F4 parser tabular P0 ⏳ 待做
+
+where/project/extend/take/sort/summarize/join/union/distinct/count/let + Pipeline + QueryStmt。

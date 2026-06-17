@@ -20,10 +20,12 @@ func (x *BinaryExpr) Pos() token.Pos { return x.X.Pos() }
 func (x *BinaryExpr) End() token.Pos { return x.Y.End() }
 
 // UnaryExpr represents a unary expression: Op X.
-// Op is one of: ADD (+), SUB (-), NOT (logical not).
+// Per the authoritative grammar (Kusto-Query-Language/grammar/Kql.g4
+// invocationExpression), KQL only has unary '+' and '-'; logical negation is
+// the not(...) *function*, not a unary operator. See internal/frontend/NOTES.md §2.9.
 type UnaryExpr struct {
 	OpPos token.Pos   // Position of the operator
-	Op    token.Token // Operator: ADD, SUB, or NOT
+	Op    token.Token // Operator: ADD or SUB only
 	X     Expr        // Operand
 }
 

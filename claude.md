@@ -87,11 +87,13 @@ kql/
 ### 前端线（F1–F7）
 | 阶段 | 状态 | 产出 |
 |---|---|---|
-| F1 词法层 | 🚧 进行中 | `token/`（✅ 枚举+Position+关键字）、`lexer/`（🚧 进行中） |
-| F2 AST 骨架 | ⏳ 待做 | `ast/` |
-| F3–F7 | ⏳ 待做 | parser/binder/diagnostic/builtin |
+| F1 词法层 | ✅ 完成 | `token/`（枚举+Position+大小写不敏感 Lookup）、`lexer/`（金标准对齐、~120 MB/s）、benchmark |
+| F2 AST 骨架 | ✅ 完成 | `ast/`（Node/Expr/Stmt/Operator 接口 + P0 节点 + Visitor）、测试 |
+| F3 parser 表达式 | ✅ 完成 | `parser/`（g4 优先级阶梯、save/restore 回溯）、`diagnostic/`（F6 提前）、测试 |
+| F4 parser tabular P0 | ⏳ 待做 | `parser/`（where/project/extend/take/sort/summarize/join/let + Pipeline） |
+| F5–F7 | ⏳ 待做 | binder/builtin（diagnostic 已在 F3 完成） |
 
-当前批次目标：完成 **F1**（lexer 全量 + 测试 + benchmark），然后推进 **F2**。
+**下一批**：F4（P0 tabular 算子 + Pipeline 顶层）。语法对齐笔记见 `internal/frontend/NOTES.md`。
 
 ## 6. 常用命令
 
@@ -101,3 +103,11 @@ go vet ./...            # 静态检查
 go test ./...           # 全量测试
 go test ./internal/frontend/...   # 仅前端线
 ```
+
+## 7. Git
+
+- 远程：`git@github.com:nzinfo/kql.git`（分支 `main`）。
+- **提交节奏**：完成一个阶段（F1/F2/…）或一组逻辑改动后及时提交，避免改动堆积。
+- `.source-projects/` 已加入 `.gitignore`（本地保留的只读上游仓库，**不提交**）。
+- 提交信息约定：`chore:` / `feat(<scope>):` / `fix(<scope>):` / `docs:`，scope 用线名（frontend/ir/optimizer/backend/shell）。
+- 语法对齐的认知持久化在 `internal/frontend/NOTES.md`（以及后续各模块的 NOTES.md），提交时一并带上。
