@@ -172,9 +172,16 @@ func (p *Parser) parseStringOp() ast.Expr {
 
 // isStringOpToken reports whether t is one of the g4 stringBinaryOperator
 // tokens (stringOperatorExpression layer).
+//
+// The `:` (COLON) token is included per g4 stringBinaryOperation: `':'` is an
+// alias for `=~` (case-insensitive equality). It's safe here because
+// parseStringOp only runs in expression position — declaration contexts (let
+// params, declare query_parameters, type annotations) parse `:` at a higher
+// level and never reach this layer.
 func isStringOpToken(t token.Token) bool {
 	switch t {
-	case token.TILDE, token.NTILDE,
+	case token.COLON, // g4 stringBinaryOperation: `':'` = case-insensitive eq
+		token.TILDE, token.NTILDE,
 		token.HAS, token.HASCS,
 		token.HASPREFIX, token.HASPREFIXCS,
 		token.HASSUFFIX, token.HASSUFFIXCS,

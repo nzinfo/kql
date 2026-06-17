@@ -28,7 +28,14 @@ func (t *translator) translateExpr(e ast.Expr) Expr {
 	case *ast.BinaryExpr:
 		x := t.translateExpr(n.X)
 		y := t.translateExpr(n.Y)
-		return &BinOp{Position: n.OpPos, Op: n.Op, X: x, Y: y}
+		op := n.Op
+		// The `:` string operator (g4 stringBinaryOperation) is semantically
+		// identical to =~ (case-insensitive equality). Normalize at translation
+		// so all existing =~ emit paths handle it.
+		if op == token.COLON {
+			op = token.TILDE
+		}
+		return &BinOp{Position: n.OpPos, Op: op, X: x, Y: y}
 	case *ast.UnaryExpr:
 		return &UnaryOp{Position: n.OpPos, Op: n.Op, X: t.translateExpr(n.X)}
 	case *ast.ParenExpr:

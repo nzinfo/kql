@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"nzinfo/kql/internal/frontend/ast"
+	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/token"
+	"nzinfo/kql/internal/ir"
 )
 
 // parsePipelineStr is a test helper: parse src as a single pipeline, failing
@@ -546,5 +548,44 @@ func TestDeclareUnknownKindLenient(t *testing.T) {
 	}
 	if ds.Kind != "pattern" {
 		t.Errorf("Kind = %q, want pattern", ds.Kind)
+	}
+}
+
+// TestColonStringOperator: `:` is the case-insensitive equality operator (g4
+// stringBinaryOperation, alias for =~).
+func TestColonStringOperator(t *testing.T) {
+	p := New("", `T | where name : "abc"`)
+	script := p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Fatalf("parse errors: %v", diags.Render())
+	}
+	q := script.Statements[0].(*ast.QueryStmt)
+	where := q.Pipeline.Ops[0].(*ast.WhereOp)
+	bin, ok := where.Predicate.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("cond = %T, want *BinaryExpr", where.Predicate)
+	}
+	if bin.Op != token.COLON {
+		t.Errorf("Op = %v, want COLON", bin.Op)
+	}
+}
+
+// TestColonStringOperatorEmit: `a : b` translates to =~ (TILDE) so existing
+// emit paths handle it. Verify the normalization at the IR level.
+func TestColonStringOperatorEmit(t *testing.T) {
+	p := New("", `T | where name : "abc"`)
+	script := p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Fatalf("parse errors: %v", diags.Render())
+	}
+	var diags2 diagnostic.List
+	pipe := ir.Translate(script, &diags2)
+	if diags2.HasErrors() {
+		t.Fatalf("translate errors: %v", diags2.Render())
+	}
+	f := pipe.Stages[0].(*ir.Filter)
+	bin := f.Predicate.(*ir.BinOp)
+	if bin.Op != token.TILDE {
+		t.Errorf("translated Op = %v, want TILDE (normalized from COLON)", bin.Op)
 	}
 }

@@ -2,6 +2,7 @@ package ir
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"nzinfo/kql/internal/frontend/token"
@@ -252,5 +253,56 @@ func TestJoinHintString(t *testing.T) {
 		if got := h.String(); got != want {
 			t.Errorf("JoinHint(%d).String() = %q, want %q", h, got, want)
 		}
+	}
+}
+
+
+// TestPrint_SimplePipeline verifies the library-level IR pretty-printer
+// produces the expected tree shape (I4.S1).
+func TestPrint_SimplePipeline(t *testing.T) {
+	pipe := &Pipeline{
+		Source: &SourceTable{Table: "events"},
+		Stages: []Stage{
+			&Filter{Predicate: &BinOp{
+				Op: token.EQL,
+				X:  &Col{Name: "state"},
+				Y:  &Lit{Value: "TX", HasValue: true, T: TypeString},
+			}},
+			&Limit{Count: &Lit{Value: int64(10), HasValue: true, T: TypeLong}},
+		},
+	}
+	out := Sprint(pipe)
+	// Should mention Pipeline, Source table, Filter, Limit.
+	for _, want := range []string{"Pipeline", `Table "events"`, "Filter", "Limit", "state", "take"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Print output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestPrint_JoinWithHint verifies the Join line includes the hint (O4).
+func TestPrint_JoinWithHint(t *testing.T) {
+	pipe := &Pipeline{
+		Source: &SourceTable{Table: "T1"},
+		Stages: []Stage{
+			&Join{
+				Kind: JoinInner,
+				Hint: JoinHintHash,
+				Right: &Pipeline{Source: &SourceTable{Table: "T2"}},
+				On: []Expr{&BinOp{Op: token.EQL, X: &Col{Name: "a"}, Y: &Col{Name: "b"}}},
+			},
+		},
+	}
+	out := Sprint(pipe)
+	if !strings.Contains(out, "hint=hash") {
+		t.Errorf("Print should show hint=hash for hinted join:\n%s", out)
+	}
+}
+
+// TestPrint_NilPipeline doesn't panic.
+func TestPrint_NilPipeline(t *testing.T) {
+	out := Sprint(nil)
+	if !strings.Contains(out, "nil") {
+		t.Errorf("nil pipeline should mention nil: %q", out)
 	}
 }
