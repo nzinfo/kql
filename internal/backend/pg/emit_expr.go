@@ -296,6 +296,20 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		return fmt.Sprintf("array_agg(DISTINCT %s)", args[0]), nil
 	case "make_list", "makelist":
 		return fmt.Sprintf("array_agg(%s)", args[0]), nil
+	case "split":
+		// pg native: regexp_split_to_array(string, pattern)
+		if len(args) == 2 {
+			return fmt.Sprintf("regexp_split_to_array(%s, %s)", args[0], args[1]), nil
+		}
+	case "extract":
+		// pg native: substring(string from pattern) or regexp_match
+		// KQL extract(pattern, captureGroup, text) → substring(text from pattern)
+		if len(args) >= 2 {
+			return fmt.Sprintf("regexp_match(%s, %s)", args[2], args[0]), nil
+		}
+	case "parse_json":
+		// pg native: cast to jsonb
+		return fmt.Sprintf("(%s)::jsonb", args[0]), nil
 	case "array_length":
 		// pg array_length(arr, 1)
 		return fmt.Sprintf("array_length(%s, 1)", args[0]), nil

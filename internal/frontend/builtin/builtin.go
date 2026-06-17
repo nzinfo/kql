@@ -116,10 +116,10 @@ var catalog = func() map[string]Spec {
 	add(Spec{Name: "max", MinArgs: 1, MaxArgs: 1, IsAggregate: true, SQLite: "MAX(%s)"})
 	add(Spec{Name: "dcount", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "COUNT(DISTINCT %s)"})
 	add(Spec{Name: "countif", MinArgs: 1, MaxArgs: 1, IsAggregate: true, SQLite: "SUM(CASE WHEN %s THEN 1 ELSE 0 END)"})
-	add(Spec{Name: "make_set", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(DISTINCT %s)", NeedsPostProc: true})
-	add(Spec{Name: "makeset", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(DISTINCT %s)", NeedsPostProc: true})
-	add(Spec{Name: "make_list", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(%s)", NeedsPostProc: true})
-	add(Spec{Name: "makelist", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(%s)", NeedsPostProc: true})
+	add(Spec{Name: "make_set", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(DISTINCT %s)"})
+	add(Spec{Name: "makeset", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(DISTINCT %s)"})
+	add(Spec{Name: "make_list", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(%s)"})
+	add(Spec{Name: "makelist", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(%s)"})
 	add(Spec{Name: "percentile", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: "", NeedsPostProc: true})
 	add(Spec{Name: "stdev", MinArgs: 1, MaxArgs: 1, IsAggregate: true, SQLite: ""}) // sqlite lacks stdev by default
 
