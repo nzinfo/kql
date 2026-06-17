@@ -28,7 +28,7 @@
 ### ⚠️ 部分实现
 | Phase | 缺失子目标 | 影响 |
 |---|---|---|
-| **F5** binder | S1 无 scope stack/symbol 类型；S4 Col.T 仅从 schema 读取不推导；S7 无 StrictMode | 中：类型推断仅覆盖源列；~~S6 函数校验已完成（KQL003/KQL004 warning）~~ |
+| **F5** binder | S1 无 scope stack/symbol 类型；S7 无 StrictMode | 低：~~S4 类型推断已完成（KQL002 warning）~~；~~S6 函数校验已完成（KQL003/KQL004 warning）~~ |
 | **F7** builtin | S1 Spec 缺 Params/ReturnType/Kind；S2 仅 ~103 函数（g4 有 380+）；S3 无 docs/capabilities.md | 中：高频函数覆盖好；低频函数按需补 |
 | **I2** translate | S4 FuncCall.Caps 用 DefaultCaps 不查 F7 表；S5 无 KQL010+ 码；S6 无 .ir golden | 低：Caps 在 emit 层按 catalog 查；golden 是 SQL 级 |
 | **I3** 投影列追踪 | 全部缺失（capabilities.md / projection.go / CTE 边界重绑定） | 中：CTE 边界决策靠经验而非系统追踪 |
@@ -94,17 +94,19 @@
 
 | 优先级 | 任务 | 理由 |
 |---|---|---|
-| 🟡 中 | IndexLookup 结构化 emit（O4 deferred） | IN-list 改写：唯一不需 pg_hint_plan 的 join 优化（用户 pg 无该扩展） |
-| 🟡 中 | F5 类型推断（S4）| KQL002 诊断码定义但从未触发；算术/比较/聚合类型推导 |
-| 🟡 中 | Arrow Record 替代 [][]interface{} | DESIGN §0 承诺；大结果集性能 |
 | 🟢 低 | F7 完整函数表（380+）/ 文档 | 按需补 |
 | 🟢 低 | T2 语料分类/NOTICE | 合规性 |
 | 🟢 低 | I4/I5 IR pretty-print/等价性 | 有 SQL golden 间接覆盖 |
+| 🟢 低 | Arrow-native Record（全迁移） | columnar 包已落地；后端直发 Record 是后续工作 |
+| 🟢 低 | 多表 join 顺序枚举 | O4 单 join 完成；多表顺序是下一步 |
 
 ### 已完成（2026-06-17）
 - ✅ **`set`/`as`/`invoke` 算子 dispatch** — 三个生产 KQL 高频构造补齐（commit 7d60561），
   附带修复 `kind` 参数名误吞 + binder Star 丢列两个深层 bug。语料 89→90（100%）。
 - ✅ **Unicode 空白 + `declare query_parameters`** — g4 WHITESPACE 全字符集 + 参数化查询解析（commit add964c）。
+- ✅ **IndexLookup 结构化 emit** — 两阶段 IN-list 查询（唯一不需 pg_hint_plan 的 join 优化）。小 outer→取键→WHERE IN→客户端 hash join（commit fd00e72）。
+- ✅ **F5 类型推断（S4）** — KQL002 TypeMismatch 激活（warning）；算术提升/比较→bool/逻辑/聚合/30+函数返回类型（commit 16b0a4b）。
+- ✅ **Arrow Record 基础** — typed columnar Record（Int64/Float64/String/Bool/Mixed + NullMask + round-trip）。DESIGN §0 第一步（commit 5692b5a）。
 - ✅ **CI 工作流（S6）** — 3-OS test matrix + pg-e2e job + O4 graceful-degrade（commit 19bd446 + b8e4f77）。
 - ✅ **F5.S6 函数校验** — KQL003/KQL004 warning 激活（commit d0cbaae）。
 - ✅ **O4 Join AltPlan** — cost-based join-method selection（Hash/NestLoop/Merge hint + IndexLookup cost），
