@@ -283,8 +283,10 @@ func (e *emitter) emitJoin(from, prev string, s *ir.Join) (string, error) {
 		joinType = "FULL"
 	}
 	onParts := make([]string, 0, len(s.On))
+	leftAlias := prev
+	rightAlias := prev + "_j"
 	for _, c := range s.On {
-		ex, err := e.emitExpr(c, prev+"_j")
+		ex, err := e.emitJoinOnExpr(c, leftAlias, rightAlias)
 		if err != nil {
 			return "", err
 		}

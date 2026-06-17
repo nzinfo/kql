@@ -186,13 +186,32 @@ func (b *binder) bindStage(st ir.Stage, in *Schema) *Schema {
 		return out
 	case *ir.Join:
 		// Recurse into the right pipeline (own schema/ColIDs).
+		var rightSchema *Schema
 		if s.Right != nil {
 			_, _ = b.bindPipeline(s.Right)
+			// Derive the right side's output schema by re-walking it (its source
+			// schema). This is approximate — the right pipeline's *output* may
+			// differ from its source if it has aggregating stages, but for the
+			// common case (a filtered sub-pipeline) the source columns persist.
+			rightSchema = b.sourceSchema(s.Right.Source)
 		}
+		// ON-conditions reference left + right columns via $left/$right (which
+		// the binder treats permissively) or unqualified (left-default).
 		for _, c := range s.On {
 			b.checkExpr(c, in)
 		}
-		return in // left-biased (known limitation: $left/$right qualification)
+		// The join's OUTPUT schema is the union of left + right columns, so that
+		// a following `project region` (right-only) resolves. Both sides'
+		// columns are visible post-join (KQL join semantics).
+		if in != nil {
+			merged := &Schema{}
+			merged.Cols = append(merged.Cols, in.Cols...)
+			if rightSchema != nil {
+				merged.Cols = append(merged.Cols, rightSchema.Cols...)
+			}
+			return merged
+		}
+		return in
 	case *ir.Union:
 		for _, in2 := range s.Inputs {
 			_, _ = b.bindPipeline(in2)
@@ -256,6 +275,12 @@ func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 	}
 	switch n := e.(type) {
 	case *ir.Col:
+		// $left / $right are join-side qualifiers; they're valid only in join ON
+		// conditions (handled by emitJoinOnExpr). The binder treats them as
+		// permissively present so they don't trigger KQL001 here.
+		if n.Name == "$left" || n.Name == "$right" {
+			return
+		}
 		bd, ok := in.Lookup(n.Name)
 		if !ok {
 			b.errorf(n.Pos(), "column %q not found in current scope", n.Name)

@@ -204,6 +204,30 @@ func TestPg_IffStringBranches(t *testing.T) {
 	}
 }
 
+// TestPg_JoinQualified: join with $left/$right ON conditions + a right-side
+// column projected post-join (the ColID binder + emit-qualification fix).
+func TestPg_JoinQualified(t *testing.T) {
+	dsn := pgDSN()
+	if dsn == "" {
+		t.Skip("set KQL_PG_DSN")
+	}
+	// meta table seeded alongside events (region is right-only).
+	res := pgRun(t, dsn, `events | join kind=inner (meta) on $left.id == $right.id | project state, region | sort by state`)
+	if len(res.Rows()) == 0 {
+		t.Fatal("join returned 0 rows; expected matched rows")
+	}
+	// FLORIDA (id=5) → region gulf
+	found := false
+	for _, row := range res.Rows() {
+		if stringVal(row[0]) == "FLORIDA" && stringVal(row[1]) == "gulf" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("FLORIDA→gulf join row not found in %d rows", len(res.Rows()))
+	}
+}
+
 // int64Val coerces a pg-returned integer-ish cell.
 func int64Val(v interface{}) int64 {
 	switch x := v.(type) {

@@ -4,10 +4,11 @@
 --   docker exec -i kql-pg psql -U kql -d kql < testdata/pg-seed.sql
 --
 -- NOTE: pg lowercases unquoted identifiers (EventType → eventtype). KQL
--- references the stored name; case-folding is tracked in backend/NOTES.md as
--- the rationale for ColID binding (DESIGN §5).
+-- references the stored name; case-folding is handled by ColID binding.
 DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS meta;
 CREATE TABLE events (id INTEGER PRIMARY KEY, state TEXT, damage REAL, eventtype TEXT);
+CREATE TABLE meta (id INT, region TEXT);
 
 INSERT INTO events VALUES
   (1, 'TEXAS',    1500.0, 'Hail'),
@@ -17,4 +18,9 @@ INSERT INTO events VALUES
   (5, 'FLORIDA',  9000.0, 'Hurricane'),
   (6, 'OKLAHOMA',  750.0, 'Wind');
 
-SELECT count(*) AS seeded FROM events;
+INSERT INTO meta VALUES
+  (1, 'south'), (2, 'north'), (3, 'east'),
+  (4, 'south'), (5, 'gulf'),  (6, 'central');
+
+SELECT count(*) AS events_seeded FROM events;
+SELECT count(*) AS meta_seeded FROM meta;

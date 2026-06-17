@@ -228,7 +228,47 @@ func sqlStringOp(op token.Token, x, y string) (string, bool) {
 	return "", false
 }
 
-// emitFuncCall emits a function call. It consults the builtin catalog
+// emitJoinOnExpr emits a join ON-condition expression, resolving $left/$right
+// qualified column references to the correct side's alias. `$left.col` →
+// leftAlias."col"; `$right.col` → rightAlias."col"; an unqualified `col` is
+// ambiguous and defaults to the LEFT side (KQL's join semantics: an unqualified
+// name in the ON clause refers to the left input unless it's right-only).
+func (e *emitter) emitJoinOnExpr(expr ir.Expr, leftAlias, rightAlias string) (string, error) {
+	switch n := expr.(type) {
+	case *ir.BinOp:
+		// recurse so each side resolves its own qualification
+		x, err := e.emitJoinOnExpr(n.X, leftAlias, rightAlias)
+		if err != nil {
+			return "", err
+		}
+		y, err := e.emitJoinOnExpr(n.Y, leftAlias, rightAlias)
+		if err != nil {
+			return "", err
+		}
+		n.X, n.Y = nil, nil // avoid reuse; rebuild below
+		if op := sqlBinaryOp(n.Op); op != "" {
+			return fmt.Sprintf("(%s %s %s)", x, op, y), nil
+		}
+		return fmt.Sprintf("(%s %s %s)", x, n.Op, y), nil
+	case *ir.Member:
+		// $left.col / $right.col
+		if lc, ok := n.X.(*ir.Col); ok {
+			switch lc.Name {
+			case "$left":
+				return fmt.Sprintf("%s.%s", leftAlias, quoteIdent(n.Field)), nil
+			case "$right":
+				return fmt.Sprintf("%s.%s", rightAlias, quoteIdent(n.Field)), nil
+			}
+		}
+	case *ir.Col:
+		// unqualified column in ON → default to left side
+		return fmt.Sprintf("%s.%s", leftAlias, quoteIdent(n.Name)), nil
+	case *ir.Lit:
+		return e.emitLit(n)
+	}
+	// fallback: use the generic emitter with the left alias
+	return e.emitExpr(expr, leftAlias)
+}
 // (internal/frontend/builtin) for a per-function SQLite translation; the catalog
 // covers the common KQL scalar/aggregate functions so emit produces VALID SQLite
 // (ago → datetime('now', -...), tostring → CAST AS TEXT, iff → CASE, etc.)

@@ -9,6 +9,41 @@ import (
 	"nzinfo/kql/internal/ir"
 )
 
+// emitJoinOnExpr emits a join ON-condition, resolving $left/$right qualified
+// references to the correct side's alias. Unqualified columns default to the
+// left side (KQL join semantics).
+func (e *emitter) emitJoinOnExpr(expr ir.Expr, leftAlias, rightAlias string) (string, error) {
+	switch n := expr.(type) {
+	case *ir.BinOp:
+		x, err := e.emitJoinOnExpr(n.X, leftAlias, rightAlias)
+		if err != nil {
+			return "", err
+		}
+		y, err := e.emitJoinOnExpr(n.Y, leftAlias, rightAlias)
+		if err != nil {
+			return "", err
+		}
+		if op := sqlBinaryOp(n.Op); op != "" {
+			return fmt.Sprintf("(%s %s %s)", x, op, y), nil
+		}
+		return fmt.Sprintf("(%s %s %s)", x, n.Op, y), nil
+	case *ir.Member:
+		if lc, ok := n.X.(*ir.Col); ok {
+			switch lc.Name {
+			case "$left":
+				return fmt.Sprintf("%s.%s", leftAlias, quoteIdent(n.Field)), nil
+			case "$right":
+				return fmt.Sprintf("%s.%s", rightAlias, quoteIdent(n.Field)), nil
+			}
+		}
+	case *ir.Col:
+		return fmt.Sprintf("%s.%s", leftAlias, quoteIdent(n.Name)), nil
+	case *ir.Lit:
+		return e.emitLit(n)
+	}
+	return e.emitExpr(expr, leftAlias)
+}
+
 // emitExpr emits SQL for an IR expression (pg dialect).
 func (e *emitter) emitExpr(expr ir.Expr, alias string) (string, error) {
 	if expr == nil {

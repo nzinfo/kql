@@ -344,3 +344,23 @@ group key 用原列名做别名（`state AS state`）；只有计算表达式且
 
 **不在范围**（下一轮）：join `$left.X`/`$right.X` 限定引用（需 IR Member 扩展）、
 类型推断（Col.T 仍 Unknown）、PhysicalPlan 集成。
+
+## 11. join `$left`/`$right` 限定列引用
+
+**问题**：`join ... on $left.id == $right.uid` 和 `join 后 project <右表列>` 之前都坏——
+- emit 把 `$left.id` 当普通 Member，输出 `_k0_j."$left"."id"`（全用右别名，且 `$left` 当列名）。
+- binder 把 `$left`/`$right` 当未知列报 KQL001；join 输出 schema 左偏，右表列（如 `region`）不可见。
+
+**修**（三处协同）：
+1. **emit `emitJoinOnExpr`**（sqlite + pg 各一份）：ON 条件里识别 `$left.col`→`leftAlias."col"`、
+   `$right.col`→`rightAlias."col"`；未限定列默认左别名。递归进 BinOp 处理 `a == b` 两侧。
+2. **binder `checkExpr`**：`$left`/`$right` 这两个特殊标识符放行（它们只在 join ON 出现，
+   emit 专用路径处理；binder 不报未知列）。
+3. **binder `bindStage` Join 分支**：输出 schema = **左 ∪ 右**（不再是左偏），让后续
+   `project region`（右表独有列）能解析。右表 schema 从 join 的 Right.Source 推导。
+
+**验收**：`TestPg_JoinQualified`——`events | join kind=inner (meta) on $left.id == $right.id
+| project state, region` 在真 pg 上返回正确连接结果（FLORIDA→gulf 等）。
+emit 输出 `ON (_k0."id" = _k0_j."id")`。seed 加了 `meta` 表。
+
+**语料影响**：6 个用 `$left`/`$right` 的查询（10/13/21/24/85/86）现在 ON 条件能正确 emit。
