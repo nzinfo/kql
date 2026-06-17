@@ -46,8 +46,9 @@ func NewFromDB(db *sql.DB) *Backend { return &Backend{db: db} }
 // Dialect returns DialectSQLite.
 func (b *Backend) Dialect() backend.Dialect { return backend.DialectSQLite }
 
-// Emit translates an IR Pipeline into a SQLite Query.
-func (b *Backend) Emit(pipe *ir.Pipeline) (*backend.Query, error) { return Emit(pipe) }
+// Emit translates an IR Pipeline into a SQLite Query. Uses the CTE-merged
+// emit path (production); falls back to nested emit for unhandled cases.
+func (b *Backend) Emit(pipe *ir.Pipeline) (*backend.Query, error) { return EmitCTE(pipe) }
 
 // Exec runs the Query and returns the rowset.
 func (b *Backend) Exec(ctx context.Context, q *backend.Query) (*backend.Result, error) {
