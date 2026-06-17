@@ -32,17 +32,108 @@ func (p *Parser) Parse() *ast.Script {
 }
 
 // parseStatement parses one top-level statement: a let-binding, a set-option,
-// or a query (tabular pipeline). The query form produces a QueryStmt wrapping
-// a Pipeline. `set` is query metadata and does not produce rows.
+// a declare-parameters, or a query (tabular pipeline). The query form produces
+// a QueryStmt wrapping a Pipeline. `set` and `declare` are query metadata and
+// do not produce rows.
 func (p *Parser) parseStatement() ast.Stmt {
 	switch p.cur {
 	case token.LET:
 		return p.parseLetStmt()
 	case token.SET:
 		return p.parseSetStmt()
+	case token.DECLARE:
+		return p.parseDeclareStmt()
 	}
 	pipe := p.parsePipeline()
 	return &ast.QueryStmt{Pipeline: pipe}
+}
+
+// parseDeclareStmt parses `declare query_parameters(Name:Type[=Default], ...)`
+// (g4 declareQueryParametersStatement). `query_parameters` is its own token in
+// the gold grammar but we don't carry it as a keyword (it lexes as IDENT), so
+// we recognise it by spelling after consuming `declare`. The statement is query
+// metadata: the translator skips it (no IR stage, no SQL). Parameter
+// substitution at exec time is deferred; for now we parse + capture.
+//
+// Unknown `declare <kind>` forms (e.g. `declare pattern`) are parsed leniently:
+// the kind name is captured and the parenthesised group is skipped so the rest
+// of the script survives.
+func (p *Parser) parseDeclareStmt() ast.Stmt {
+	declPos := p.expect(token.DECLARE)
+	kind := "query_parameters"
+	// The kind name: an IDENT (query_parameters / pattern / ...).
+	if p.cur == token.IDENT || p.cur.IsKeyword() {
+		kind = p.lit
+		p.next()
+	}
+	out := &ast.DeclareStmt{Declare: declPos, Kind: kind}
+	// query_parameters has the form `declare query_parameters(...)`: the (
+	// immediately follows the kind. Other declare forms (e.g. `declare pattern
+	// Name(...)`) have tokens between the kind and the first (. For those we
+	// skip ahead to the first ( and then skip the balanced group.
+	if kind == "query_parameters" {
+		if p.cur != token.LPAREN {
+			p.error(p.pos, "expected '(' after declare query_parameters")
+			return out
+		}
+		p.next() // consume (
+		out.Params = p.parseQueryParams()
+	} else {
+		// Scan forward to the first '(' (skipping e.g. the pattern name), then
+		// skip the balanced group. Stop at a statement boundary if no '(' found.
+		for p.cur != token.LPAREN && p.cur != token.SEMI && p.cur != token.EOF {
+			p.next()
+		}
+		if p.cur == token.LPAREN {
+			p.next() // consume (
+			depth := 1
+			for depth > 0 && p.cur != token.EOF {
+				if p.cur == token.LPAREN {
+					depth++
+				}
+				if p.cur == token.RPAREN {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+				p.next()
+			}
+		}
+	}
+	if p.cur == token.RPAREN {
+		out.Rparen = p.pos
+		p.next()
+	}
+	return out
+}
+
+// parseQueryParams parses `Name:Type[=Default], ...` up to the closing ).
+// Types are captured as ident spellings (not validated); defaults are any
+// primary expression.
+func (p *Parser) parseQueryParams() []*ast.QueryParam {
+	var out []*ast.QueryParam
+	for p.cur != token.RPAREN && p.cur != token.EOF {
+		qp := &ast.QueryParam{}
+		if p.cur == token.IDENT || p.cur.IsKeyword() {
+			qp.Name = p.parseIdentLike()
+		}
+		if p.cur == token.COLON {
+			p.next()
+			if p.cur == token.IDENT || p.cur.IsKeyword() {
+				qp.Type = p.parseIdentLike()
+			}
+		}
+		if p.cur == token.ASSIGN {
+			p.next()
+			qp.Default = p.parsePrimary()
+		}
+		out = append(out, qp)
+		if !p.accept(token.COMMA) {
+			break
+		}
+	}
+	return out
 }
 
 // parseSetStmt parses `set Name [= Value]` (g4 setStatement). Value is optional

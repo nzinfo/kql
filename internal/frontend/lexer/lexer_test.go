@@ -354,3 +354,59 @@ func TestUnicodeIdent(t *testing.T) {
 		t.Errorf("got %+v, want IDENT 'café'", toSeq(toks))
 	}
 }
+
+
+// TestUnicodeWhitespace — the gold-standard WHITESPACE token covers non-ASCII
+// spaces. Pasted queries from rich-text editors carry NBSP (\u00a0); files
+// exported from Windows often start with a BOM (\ufeff). Both must be skipped,
+// not error. Mirrors the g4 WHITESPACE character set.
+func TestUnicodeWhitespace(t *testing.T) {
+	cases := []struct {
+		name string
+		sep  string // the whitespace rune(s) to insert
+	}{
+		{"NBSP", "\u00a0"},
+		{"BOM", "\ufeff"},
+		{"NARROW_NBSP", "\u202f"},
+		{"MEDIUM_MATH", "\u205f"},
+		{"IDEOGRAPHIC", "\u3000"},
+		{"OGHAM", "\u1680"},
+		{"FIGURE_SPACE", "\u2007"},
+		{"EN_QUAD", "\u2000"},
+		{"FormFeed", "\f"},
+	}
+	for _, c := range cases {
+		// "T" + sep + "where" → should lex as IDENT(T) WHERE.
+		src := "T" + c.sep + "where"
+		toks := scanAll(t, src)
+		// Expect: IDENT "T", WHERE, EOF (scanAll may or may not include EOF;
+		// filter to the meaningful tokens).
+		var got []Token
+		for _, tk := range toks {
+			if tk.Type == token.EOF {
+				continue
+			}
+			got = append(got, tk)
+		}
+		if len(got) != 2 || got[0].Type != token.IDENT || got[1].Type != token.WHERE {
+			t.Errorf("%s: scan %q got %v, want [IDENT WHERE]", c.name, src, toSeq(got))
+		}
+	}
+}
+
+// TestLeadingBOM — a BOM at the very start of the file is skipped, so the first
+// real token (a table name) lexes cleanly.
+func TestLeadingBOM(t *testing.T) {
+	src := "\ufeffEvents | take 1"
+	toks := scanAll(t, src)
+	var got []Token
+	for _, tk := range toks {
+		if tk.Type == token.EOF {
+			continue
+		}
+		got = append(got, tk)
+	}
+	if len(got) < 2 || got[0].Type != token.IDENT || got[0].Lit != "Events" || got[1].Type != token.PIPE {
+		t.Errorf("leading BOM: got %v, want [IDENT(Events) PIPE ...]", toSeq(got))
+	}
+}

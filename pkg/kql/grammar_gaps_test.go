@@ -121,3 +121,22 @@ func TestE2E_SetWithValue(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(res.Rows()))
 	}
 }
+
+
+// TestE2E_DeclareQueryParameters runs `declare query_parameters(...); <query>`
+// end-to-end. The declare is metadata (translator skips it), so the query must
+// execute normally. Parameter substitution is deferred; the query here doesn't
+// reference the parameter (it would need binder/exec wiring to substitute).
+func TestE2E_DeclareQueryParameters(t *testing.T) {
+	db := gapDB(t)
+	bk := sqlite.NewFromDB(db)
+	res, err := kql.ExecOn(context.Background(), bk,
+		`declare query_parameters(Limit:int = 5);
+		 t | take 2 | sort by id`)
+	if err != nil {
+		t.Fatalf("ExecOn: %v", err)
+	}
+	if len(res.Rows()) != 2 {
+		t.Fatalf("rows = %d, want 2", len(res.Rows()))
+	}
+}

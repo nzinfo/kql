@@ -455,3 +455,96 @@ func typeName(v interface{}) string {
 	// *ast.WhereOp), so reflect directly — do NOT call .Elem().
 	return reflect.TypeOf(v).String()
 }
+
+
+// TestDeclareQueryParameters parses `declare query_parameters(Name:Type[=Def],
+// ...);` at the statement level and confirms the AST shape.
+func TestDeclareQueryParameters(t *testing.T) {
+	src := `declare query_parameters(Limit:int = 10, Threshold:long, Start:datetime);`
+	p := New("", src)
+	script := p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Fatalf("parse errors: %v", diags.Render())
+	}
+	if len(script.Statements) != 1 {
+		t.Fatalf("stmts = %d, want 1", len(script.Statements))
+	}
+	ds, ok := script.Statements[0].(*ast.DeclareStmt)
+	if !ok {
+		t.Fatalf("stmt0 = %T, want *DeclareStmt", script.Statements[0])
+	}
+	if ds.Kind != "query_parameters" {
+		t.Errorf("Kind = %q, want query_parameters", ds.Kind)
+	}
+	if len(ds.Params) != 3 {
+		t.Fatalf("Params = %d, want 3", len(ds.Params))
+	}
+	// First param: Limit:int = 10 (has default).
+	if ds.Params[0].Name == nil || ds.Params[0].Name.Name != "Limit" {
+		t.Errorf("param0 Name = %+v, want Limit", ds.Params[0].Name)
+	}
+	if ds.Params[0].Type == nil || ds.Params[0].Type.Name != "int" {
+		t.Errorf("param0 Type = %+v, want int", ds.Params[0].Type)
+	}
+	if ds.Params[0].Default == nil {
+		t.Errorf("param0 Default nil, want non-nil (10)")
+	}
+	// Second param: Threshold:long (no default).
+	if ds.Params[1].Name == nil || ds.Params[1].Name.Name != "Threshold" {
+		t.Errorf("param1 Name = %+v, want Threshold", ds.Params[1].Name)
+	}
+	if ds.Params[1].Default != nil {
+		t.Errorf("param1 Default = %+v, want nil", ds.Params[1].Default)
+	}
+	// Third param: Start:datetime.
+	if ds.Params[2].Type == nil || ds.Params[2].Type.Name != "datetime" {
+		t.Errorf("param2 Type = %+v, want datetime", ds.Params[2].Type)
+	}
+}
+
+// TestDeclareFollowedByQuery: the real script shape is
+// `declare query_parameters(...); <query>` — confirm both statements parse and
+// the translator skips the declare (metadata) to reach the query.
+func TestDeclareFollowedByQuery(t *testing.T) {
+	src := "declare query_parameters(N:int = 5);\nT | take N"
+	p := New("", src)
+	script := p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Fatalf("parse errors: %v", diags.Render())
+	}
+	if len(script.Statements) != 2 {
+		t.Fatalf("stmts = %d, want 2", len(script.Statements))
+	}
+	if _, ok := script.Statements[0].(*ast.DeclareStmt); !ok {
+		t.Errorf("stmt0 = %T, want *DeclareStmt", script.Statements[0])
+	}
+	q, ok := script.Statements[1].(*ast.QueryStmt)
+	if !ok {
+		t.Fatalf("stmt1 = %T, want *QueryStmt", script.Statements[1])
+	}
+	if q.Pipeline == nil || len(q.Pipeline.Ops) != 1 {
+		t.Errorf("Pipeline/Ops wrong: %+v", q.Pipeline)
+	}
+}
+
+// TestDeclareUnknownKindLenient: an unrecognised `declare <kind>(...)` (e.g.
+// `declare pattern`) is parsed without error — the kind is captured and the
+// parenthesised group skipped, so the rest of the script survives.
+func TestDeclareUnknownKindLenient(t *testing.T) {
+	src := `declare pattern MyPattern(SomeDef); T | take 1`
+	p := New("", src)
+	script := p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Fatalf("unexpected errors: %v", diags.Render())
+	}
+	if len(script.Statements) != 2 {
+		t.Fatalf("stmts = %d, want 2", len(script.Statements))
+	}
+	ds, ok := script.Statements[0].(*ast.DeclareStmt)
+	if !ok {
+		t.Fatalf("stmt0 = %T, want *DeclareStmt", script.Statements[0])
+	}
+	if ds.Kind != "pattern" {
+		t.Errorf("Kind = %q, want pattern", ds.Kind)
+	}
+}

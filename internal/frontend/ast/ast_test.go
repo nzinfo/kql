@@ -38,6 +38,7 @@ var (
 	_ Stmt = (*LetStmt)(nil)
 	_ Stmt = (*ExprStmt)(nil)
 	_ Stmt = (*SetStmt)(nil)
+	_ Stmt = (*DeclareStmt)(nil)
 
 	_ Operator = (*WhereOp)(nil)
 	_ Operator = (*ProjectOp)(nil)
@@ -228,7 +229,7 @@ func TestWalkCoverage(t *testing.T) {
 func TestBaseVisitorNoPanics(t *testing.T) {
 	bv := &BaseVisitor{}
 	nodes := []Node{
-		&Script{}, &QueryStmt{Pipeline: &Pipeline{}}, &LetStmt{}, &ExprStmt{}, &SetStmt{},
+		&Script{}, &QueryStmt{Pipeline: &Pipeline{}}, &LetStmt{}, &ExprStmt{}, &SetStmt{}, &DeclareStmt{},
 		&Pipeline{}, &BasicLit{}, &DynamicLit{}, &Ident{}, &StarExpr{}, &NamedExpr{},
 		&BinaryExpr{}, &UnaryExpr{}, &ParenExpr{}, &CallExpr{}, &SelectorExpr{},
 		&IndexExpr{}, &ListExpr{}, &BetweenExpr{}, &ConditionalExpr{}, &CastExpr{},

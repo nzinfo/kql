@@ -140,12 +140,22 @@ func (l *Lexer) error(offset int, msg string) {
 }
 
 // skipWhitespace skips spaces, tabs, newlines and // comments.
+//
+// The whitespace set mirrors the gold-standard grammar's WHITESPACE token
+// (KqlTokens.g4): ASCII \t space \r \n \f PLUS the Unicode whitespace block
+// (NBSP, BOM, and the U+2000–U+3000 / U+1680 / U+180e spaces). Pasted queries
+// from rich-text editors / spreadsheets frequently carry NBSP (\u00a0) or a
+// leading BOM (\ufeff), so recognising them is a real-world robustness fix,
+// not a theoretical one. \u2028/\u2029 (line separators) are NOT whitespace
+// per g4 (they only terminate // comments) and are left to the caller.
 func (l *Lexer) skipWhitespace() {
 	for {
-		switch l.ch {
-		case ' ', '\t', '\r', '\n':
+		switch {
+		case l.ch == ' ' || l.ch == '\t' || l.ch == '\r' || l.ch == '\n' || l.ch == '\f':
 			l.next()
-		case '/':
+		case isUnicodeSpace(l.ch):
+			l.next()
+		case l.ch == '/':
 			if l.peek() == '/' {
 				l.scanComment()
 			} else {
@@ -155,6 +165,26 @@ func (l *Lexer) skipWhitespace() {
 			return
 		}
 	}
+}
+
+// isUnicodeSpace reports whether ch is one of the non-ASCII whitespace runes in
+// the g4 WHITESPACE token. Kept as an explicit list (not unicode.IsSpace) so the
+// set is identical to the grammar and BOM (\ufeff) is included — unicode.IsSpace
+// returns false for BOM.
+func isUnicodeSpace(ch rune) bool {
+	switch ch {
+	case '\u00a0', // NBSP
+		'\u1680', // OGHAM SPACE MARK
+		'\u180e', // MONGOLIAN VOWEL SEPARATOR
+		'\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006',
+		'\u2007', '\u2008', '\u2009', '\u200a', '\u200b', // EN QUAD .. ZERO WIDTH SPACE
+		'\u202f', // NARROW NO-BREAK SPACE
+		'\u205f', // MEDIUM MATHEMATICAL SPACE
+		'\u3000', // IDEOGRAPHIC SPACE
+		'\ufeff': // BOM / ZERO WIDTH NO-BREAK SPACE
+		return true
+	}
+	return false
 }
 
 // scanComment scans a // line comment.

@@ -107,6 +107,34 @@ func (s *SetStmt) End() token.Pos {
 	return token.Pos(int(s.Set) + len("set"))
 }
 
+// QueryParam is one `declare query_parameters` entry: Name:Type [= Default].
+// Captured for round-trip; the translator skips it (parameter binding is a
+// future concern — the values come from the client at exec time).
+type QueryParam struct {
+	Name    *Ident // parameter name
+	Type    *Ident // type spelling (string/int/datetime/...) — captured, not validated
+	Default Expr   // optional default value, nil if absent
+}
+
+// DeclareStmt is `declare query_parameters(Name:Type[=Default], ...)` (g4
+// declareQueryParametersStatement). It declares client-supplied query
+// parameters before the query runs. Like `set`, it is query metadata: the
+// translator skips it (it produces no rows and no SQL). Parameter substitution
+// at exec time is deferred — for now we parse + capture so real queries that
+// declare parameters don't fail.
+type DeclareStmt struct {
+	Declare token.Pos      // position of "declare"
+	Kind    string         // "query_parameters" (the only declare form parsed)
+	Params  []*QueryParam  // declared parameters
+	Rparen  token.Pos      // position of closing )
+}
+
+// Pos returns the position of "declare".
+func (s *DeclareStmt) Pos() token.Pos { return s.Declare }
+
+// End returns one past the closing ).
+func (s *DeclareStmt) End() token.Pos { return token.Pos(int(s.Rparen) + 1) }
+
 // Script is the root of a KQL script: a sequence of statements separated by
 // ';', matching the authoritative grammar's `query: statement (';' statement)*`.
 type Script struct {
@@ -136,3 +164,6 @@ func (*ExprStmt) stmt()  {}
 
 func (*SetStmt) node() {}
 func (*SetStmt) stmt() {}
+
+func (*DeclareStmt) node() {}
+func (*DeclareStmt) stmt() {}

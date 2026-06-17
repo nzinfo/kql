@@ -23,6 +23,8 @@ func (v *BaseVisitor) Visit(node Node) (w Visitor) {
 		v.VisitExprStmt(n)
 	case *SetStmt:
 		v.VisitSetStmt(n)
+	case *DeclareStmt:
+		v.VisitDeclareStmt(n)
 	case *Pipeline:
 		v.VisitPipeline(n)
 	case *BasicLit:
@@ -106,6 +108,9 @@ func (v *BaseVisitor) VisitExprStmt(*ExprStmt) {}
 
 // VisitSetStmt visits a SetStmt.
 func (v *BaseVisitor) VisitSetStmt(*SetStmt) {}
+
+// VisitDeclareStmt visits a DeclareStmt.
+func (v *BaseVisitor) VisitDeclareStmt(*DeclareStmt) {}
 
 // VisitPipeline visits a Pipeline.
 func (v *BaseVisitor) VisitPipeline(*Pipeline) {}
