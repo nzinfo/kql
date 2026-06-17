@@ -87,13 +87,13 @@ kql/
 ### 前端线（F1–F7）
 | 阶段 | 状态 | 产出 |
 |---|---|---|
-| F1 词法层 | ✅ 完成 | `token/`（枚举+Position+大小写不敏感 Lookup）、`lexer/`（金标准对齐、~120 MB/s）、benchmark |
+| F1 词法层 | ✅ 完成 | `token/`（枚举+Position+大小写不敏感 Lookup + round-trip 审计）、`lexer/`（金标准对齐、~120 MB/s）、benchmark |
 | F2 AST 骨架 | ✅ 完成 | `ast/`（Node/Expr/Stmt/Operator 接口 + P0 节点 + Visitor）、测试 |
 | F3 parser 表达式 | ✅ 完成 | `parser/`（g4 优先级阶梯、save/restore 回溯）、`diagnostic/`（F6 提前）、测试 |
-| F4 parser tabular P0 | ⏳ 待做 | `parser/`（where/project/extend/take/sort/summarize/join/let + Pipeline） |
+| F4 parser tabular P0 | ✅ 完成 | `parser/`（pipeline + where/project/extend/take/sort/summarize/join/union/distinct/count/top/let）、端到端测试 |
 | F5–F7 | ⏳ 待做 | binder/builtin（diagnostic 已在 F3 完成） |
 
-**下一批**：F4（P0 tabular 算子 + Pipeline 顶层）。语法对齐笔记见 `internal/frontend/NOTES.md`。
+**已完成**：F1–F4，前端能解析完整 P0 查询到 AST。**下一批**：F5 binder（名称解析/类型推断/列绑定）或转入 IR 线。语法对齐笔记见 `internal/frontend/NOTES.md`。
 
 ## 6. 常用命令
 

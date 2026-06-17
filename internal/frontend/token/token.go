@@ -335,6 +335,7 @@ var tokenStrings = [...]string{
 	PARTITION:           "partition",
 	PRINT:               "print",
 	PROJECT:             "project",
+	JOIN:                "join",
 	PROJECTAWAY:         "project-away",
 	PROJECTKEEP:         "project-keep",
 	PROJECTRENAME:       "project-rename",

@@ -190,6 +190,44 @@ Diagnostic/Severity/Code（KQL000/005/001/...）/List（Add/Dedup/HasErrors/Rend
 字节起始）重置 lexer（`Reset(int(pos)-1)`）再 `next()`，而不是用 `lx.Offset()`。
 见 `parser.go` 的 savedState/restore。这条踩过坑，记下来防再犯。
 
-### F4 parser tabular P0 ⏳ 待做
+### F4 parser tabular P0 ✅ 完成
 
-where/project/extend/take/sort/summarize/join/union/distinct/count/let + Pipeline + QueryStmt。
+| 子目标 | 状态 | 文件 |
+|---|---|---|
+| F4.S1 Pipeline 顶层（`|` 分割算子） | ✅ | `parser/pipeline.go` |
+| F4.S2 where / project / extend | ✅ | `parser/op_simple.go` |
+| F4.S3 take / sort(order) / top | ✅ | `parser/op_simple.go`, `parser/op_sort.go` |
+| F4.S4 summarize（agg by keys, bin 函数） | ✅ | `parser/op_summarize.go` |
+| F4.S5 join（kind=…, on conditions） | ✅ | `parser/op_join.go` |
+| F4.S6 let / union / distinct / count | ✅ | `parser/op_simple.go`, `parser/op_union.go`, `parser/script.go` |
+| F4.S7 端到端集成测试 | ✅ | `parser/tabular_test.go` |
+
+验收（来自 F4-parser-tabular.md）：能解析
+`T | where x > 0 | extend y = x*2 | summarize count() by y | order by y desc | take 10`
+✅（TestEndToEndFullQuery，5 个算子齐全）。
+
+**F4 期间发现并修正的 3 个关键问题（防再犯）：**
+
+1. **JOIN 关键字漏 tokenStrings 条目**（F1 遗留 bug）：JOIN 常量存在但 `tokenStrings[JOIN]`
+   为空 → `Lookup("join")` 返回 IDENT → join 算子解析失败。根因：从 kqlparser 复制 token 表
+   时漏了这一行。**已修**：补 `JOIN: "join"`，并加 `TestKeywordRoundTrip` 审计测试 ——
+   每个关键字 const 必须能在 `tokenStrings` 里找到、且 `Lookup` 大小写双向 round-trip。
+   **教训**：新增关键字 const 时必须同时加 tokenStrings 条目，测试会拦。
+
+2. **operator param 值不能走 parseIdentFollowed**：`kind=inner (T2)` 里 `inner` 是值、
+   `(T2)` 是 join 的右表。若 param value 走 `parseIdentFollowed`，会把 `inner (T2)` 当函数
+   调用吞掉。**修**：`parseParamValue` 只吃单个 token（IDENT/keyword/字面量），不进 postfix/call。
+   对齐 g4 queryOperatorProperty（值是单 identifier 或 literal）。
+
+3. **tryParamName 不能对任意 IDENT 探测**：曾用 "IDENT 后跟 '=' 就当 param 名" 的启发，
+   结果把 `summarize c = count()` 的 `c`（聚合别名）误判成 param。**修**：只认 g4 的
+   keyword 形 param 名（kind/withsource/datascope）；hint.* 形（g4 HINT_* token）我们 token
+   表暂无，按 IDENT 留给 body/binder 处理。**原则**：strict param 名是封闭关键字集，不是任意 IDENT。
+
+**Pipeline 顶层**：`parseStatement` → `let` 走 `parseLetStmt`（RHS 用 parsePipeline 兼顾
+标量 let 与表 let），否则走 `parsePipeline` → `QueryStmt{Pipeline}`。
+let 的 RHS 若无 `|`，回退为纯标量 Expr（`let n = 5` 的 Expr 是 BasicLit 而非 Pipeline）。
+
+### 后续待做（F5/F7）
+- F5 binder：符号/类型/schema 流、列绑定到物理列 ID、严格模式。
+- F7 builtin：从 kqlparser/builtin 抽 380+ 函数清单。

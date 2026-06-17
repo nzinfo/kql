@@ -9,9 +9,8 @@ import (
 // are accumulated in the parser; callers MUST check p.Diagnostics().HasErrors()
 // before trusting the AST. The parser never panics on bad input.
 //
-// Currently implements the expression path (F3); the tabular-operator path
-// (F4) is wired via parseStatement/parsePipeline as they land. For F3 the
-// entry exercises the expression layers via ParseExpr (see expr_test.go).
+// F4: a script is a sequence of ;-separated statements, each either a
+// let-binding or a query (tabular pipeline).
 func (p *Parser) Parse() *ast.Script {
 	script := &ast.Script{}
 	for p.cur != token.EOF {
@@ -32,36 +31,31 @@ func (p *Parser) Parse() *ast.Script {
 	return script
 }
 
-// parseStatement parses one top-level statement. F3 implements the expression-
-// statement form (so expression tests can go through Parse()); F4 will add
-// let-statement and query-statement (pipeline) forms.
+// parseStatement parses one top-level statement: a let-binding or a query
+// (tabular pipeline). The query form produces a QueryStmt wrapping a Pipeline.
 func (p *Parser) parseStatement() ast.Stmt {
-	// let Name = expr ;
 	if p.cur == token.LET {
 		return p.parseLetStmt()
 	}
-	// Otherwise treat as an expression statement (F3 expression path) or, in
-	// F4, a pipeline query statement.
-	expr := p.parseExprOrPipeline()
-	if expr == nil {
-		return nil
-	}
-	return &ast.ExprStmt{Expr: expr}
+	pipe := p.parsePipeline()
+	return &ast.QueryStmt{Pipeline: pipe}
 }
 
-// parseLetStmt parses `let Name = Expr ;`.
+// parseLetStmt parses `let Name = Expr ;`. Expr may be a scalar expression or a
+// tabular pipeline (`let X = T | where ...`); the pipeline form is detected by
+// the same parsePipeline entry point used for queries.
 func (p *Parser) parseLetStmt() *ast.LetStmt {
 	let := p.expect(token.LET)
 	name := p.parseIdentLike()
 	assign := p.expect(token.ASSIGN)
-	val := p.ParseExpr()
+	// The RHS may be a scalar expr or a pipeline; parsePipeline handles both
+	// (it parses an expression for the source, then consumes any `|` stages).
+	pipe := p.parsePipeline()
+	var val ast.Expr = pipe
+	// If the pipeline had no operators and a bare source, surface the source
+	// expression directly so scalar lets (`let n = 5;`) keep a scalar shape.
+	if len(pipe.Ops) == 0 && pipe.Source != nil {
+		val = pipe.Source
+	}
 	return &ast.LetStmt{Let: let, Name: name, Assign: assign, Expr: val}
-}
-
-// parseExprOrPipeline parses either a tabular pipeline (`Source | op | op …`)
-// or a bare expression. For F3 (expression-only) it parses a single expression.
-// F4 extends this to detect a following `|` and parse operators.
-func (p *Parser) parseExprOrPipeline() ast.Expr {
-	// F4 will handle the pipeline form here. For now (F3) parse an expression.
-	return p.ParseExpr()
 }
