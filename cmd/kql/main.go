@@ -34,27 +34,54 @@ func main() {
 
 // run parses args and dispatches to the chosen subcommand or the default run
 // action. Kept separate from main() for testability (tests call run directly).
+//
+// Subcommands (explain/validate/help/version) are recognised at args[0] OR
+// after leading global flags (so `-d x explain 'q'` works, matching user
+// intuition that `-d` configures the whole invocation).
 func run(args []string) error {
 	if len(args) == 0 {
 		printUsage(os.Stdout)
 		return nil
 	}
 
-	// Subcommands first.
-	switch args[0] {
-	case "explain":
-		return runExplain(args[1:])
-	case "validate":
-		return runValidate(args[1:])
-	case "-h", "--help", "help":
-		printUsage(os.Stdout)
-		return nil
-	case "-v", "--version":
-		fmt.Fprintln(os.Stdout, "kql 0.1.0 (prototype; sqlite backend)")
-		return nil
+	// Scan for a leading subcommand, skipping -d <dsn> / -o <fmt> flags.
+	subIdx := -1
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-d" || a == "-o":
+			i++ // skip the flag's value too
+		case a == "explain" || a == "validate":
+			subIdx = i
+		case a == "-h" || a == "--help" || a == "help":
+			printUsage(os.Stdout)
+			return nil
+		case a == "-v" || a == "--version":
+			fmt.Fprintln(os.Stdout, "kql 0.1.0 (prototype; sqlite backend)")
+			return nil
+		case strings.HasPrefix(a, "-"):
+			// unknown flag; let flag parsing report it
+		default:
+			// first positional (non-flag) token: if it's a subcommand we'd have
+			// set subIdx above; otherwise it's the query and there's no sub.
+		}
+		if subIdx >= 0 {
+			break
+		}
 	}
 
-	// Default: run a query. Parse flags + positional query.
+	if subIdx >= 0 {
+		// Extract the -d/-o flags from before the subcommand, the rest after.
+		dsn := flagStr(args[:subIdx], "d", "")
+		switch args[subIdx] {
+		case "explain":
+			return runExplain(dsn, args[subIdx+1:])
+		case "validate":
+			return runValidate(args[subIdx+1:])
+		}
+	}
+
+	// Default: run a query.
 	fs := flag.NewFlagSet("kql", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dsn := fs.String("d", "", "data source (sqlite dsn, e.g. :memory: or a .db path)")
@@ -73,6 +100,19 @@ func run(args []string) error {
 	return runQuery(context.Background(), *dsn, *format, query)
 }
 
+// flagStr scans args for a -name <value> pair (name without leading "-") and
+// returns its value (or def if absent). Used to pull global flags out before a
+// subcommand without invoking flag.Parse on a mixed slice.
+func flagStr(args []string, name, def string) string {
+	flag := "-" + name
+	for i := 0; i < len(args); i++ {
+		if args[i] == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return def
+}
+
 // runQuery executes a KQL query against the sqlite backend and prints rows.
 func runQuery(ctx context.Context, dsn, format, query string) error {
 	bk, err := sqlite.New(dsn)
@@ -88,11 +128,11 @@ func runQuery(ctx context.Context, dsn, format, query string) error {
 }
 
 // runExplain parses and translates a query, then prints the IR and the emitted
-// SQL WITHOUT executing it. Useful for debugging translation.
-func runExplain(args []string) error {
+// SQL WITHOUT executing it. Useful for debugging translation. dsn is optional
+// (when provided, the backend SQL is emitted; otherwise only the IR).
+func runExplain(dsn string, args []string) error {
 	fs := flag.NewFlagSet("kql explain", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	dsn := fs.String("d", "", "data source (sqlite dsn; needed to emit backend SQL)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -110,8 +150,8 @@ func runExplain(args []string) error {
 	printIR(os.Stdout, pipe)
 	fmt.Println()
 
-	if *dsn != "" {
-		bk, err := sqlite.New(*dsn)
+	if dsn != "" {
+		bk, err := sqlite.New(dsn)
 		if err != nil {
 			return err
 		}
