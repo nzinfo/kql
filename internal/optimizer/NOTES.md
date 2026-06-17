@@ -124,3 +124,30 @@ manual 缺 mcv+hist = 0.6×0.5 = 0.3 < 0.5 ✓。
 
 **不在范围**（下一轮）：O1.S2 join 选择率（`1/max(card_a,card_b)`）、
 O1.S3 corr 修正（强相关列复合谓词不严重高估）。两者都建在已落地的 Estimator 上。
+
+## 7. O1.S2 + O1.S3 — join 选择率 + corr 修正
+
+**join 选择率**（`selectivity_join.go`，O1.S2）：
+- `JoinSelectivity(leftT, rightT, on, leftCard, rightCard)`：DESIGN §6.3 公式
+  `t1.a = t2.a → 1/max(card_a, card_b)`。多 key 走独立假设乘积，再经 corr 修正。
+- `OutputCardinality`：`leftCard × rightCard × sel`（≥1，<1 上取整）。
+- 非 `=` 条件 / 缺 card → `DefaultSelectivity`。无 on 条件（cross join）→ 1.0。
+
+**corr 修正**（`corr.go`，O1.S3）：
+- 独立假设 `s1×s2` 在相关列上**高估**（典型 created_at vs id，rho≈1）。
+- 公式：`s_corrected = s1*s2 + rho * sqrt(s1*(1-s1) * s2*(1-s2))`。
+- 实现：`applyCorrCorrection` 扫 join key 对 (i,j)，若 col_i 的 `corr_vs` 指向 col_j
+  （同表）且 rho≠0，把该对的独立乘积换成 rho 修正版。
+- **rho 缺失不报错**（pg 不提供 ρ，常态）—— 纯独立假设。
+- rho 正（相关）→ 抬高估算；rho 负（反相关）→ 压低；结果 clamp 到 [0,1]。
+
+**测试**：12 个新增（join 6：单 key/不同 card/多 key 独立/无 on/未知 card/输出基数；
+corr 5：正 rho 抬高/负 rho 压低/单 key 不受影响/无关列忽略/clamp；+ sqrt helper）。
+全量 cost 包 29 个单测全绿。
+
+**关键设计权衡**：
+- **pairwise 修正**而非全协方差矩阵——catalog 只记 `corr_vs{OtherColumn, Rho}`
+  （单列对单列），多变量需要 N×N 矩阵，超出 O0 catalog 形状。pairwise 是
+ 保守且够用的近似。
+- **left 表视角**：corr_vs 记在左表列上（join 的 driving side）；右表不重复算。
+- **sqrt 自实现**（牛顿法 16 迭代）：避免仅为这一个调用点 import math。
