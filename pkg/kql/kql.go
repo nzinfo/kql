@@ -25,6 +25,7 @@ import (
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/parser"
 	"nzinfo/kql/internal/ir"
+	"nzinfo/kql/internal/optimizer/rules"
 )
 
 // Exec runs a KQL query against the database at dsn and returns the result.
@@ -94,6 +95,11 @@ func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, err
 			return nil, &Error{diags: diags, stage: "bind"}
 		}
 	}
+	// Optimize: run the rule-based IR rewriter (predicate pushdown, etc.) to
+	// fixpoint. Rules are dialect-agnostic; the rewritten pipeline is
+	// semantically equivalent and emits the same results. Optimization never
+	// fails the query (a rule bug would change IR but keep emitting valid SQL).
+	defaultEngine.Optimize(pipe)
 	q, err := bk.Emit(pipe)
 	if err != nil {
 		return nil, fmt.Errorf("emit: %w", err)
@@ -104,6 +110,10 @@ func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, err
 	}
 	return &Result{r}, nil
 }
+
+// defaultEngine is the standard rule engine applied to every query. Currently
+// PredicatePushdown; more rules (ColumnPrune, ConstantFold) land with O2.S3/S4.
+var defaultEngine = rules.NewEngine(rules.PredicatePushdown{})
 
 // binderProvider is the optional interface a backend implements to enable
 // bind-time column validation. Defined locally (not imported as
