@@ -60,6 +60,35 @@ func (p *Parser) parsePipedOperator() ast.Operator {
 		return p.parseTopOp(pipePos)
 	case token.PROJECTREORDER:
 		return p.parseProjectReorderOp(pipePos)
+	// P1 operators
+	case token.MVEXPAND:
+		return p.parseMvExpandOp(pipePos)
+	case token.MAKESERIES:
+		return p.parseMakeSeriesOp(pipePos)
+	case token.PARSE:
+		return p.parseParseOp(pipePos, false)
+	case token.PARSEWHERE:
+		return p.parseParseOp(pipePos, true)
+	case token.PARSEKV:
+		return p.parseParseKvOp(pipePos)
+	case token.RENDER:
+		return p.parseRenderOp(pipePos)
+	case token.CONSUME:
+		return p.parseConsumeOp(pipePos)
+	case token.GETSCHEMA:
+		return p.parseGetSchemaOp(pipePos)
+	case token.SERIALIZE:
+		return p.parseSerializeOp(pipePos)
+	case token.EXTERNALDATA:
+		return p.parseExternalDataOp(pipePos)
+	case token.EVALUATE:
+		return p.parseEvaluateOp(pipePos)
+	// P2 operators — parsed as passthroughs (semantics deferred; see NOTES.md §6).
+	// These produce real AST nodes only where worth it; the rest collapse to a
+	// generic pass-through that consumes tokens to the next stage boundary.
+	case token.TOPNESTED, token.PARTITION, token.FORK, token.LOOKUP,
+		token.FACET, token.SAMPLE, token.SAMPLEDISTINCT, token.REDUCE:
+		return p.parsePassthroughOp(pipePos)
 	}
 	// Unknown operator: record an error and recover to the next | or ;.
 	p.error(p.pos, "unknown tabular operator "+p.cur.String())

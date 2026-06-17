@@ -133,11 +133,13 @@ func TestCorpusCoverage(t *testing.T) {
 		}
 	}
 
-	// Regression baseline: the P0 parser must handle at least this fraction of
-	// real-world queries. Bump as coverage grows. Currently low because the
-	// corpus uses parse/mv-expand/make-series/externaldata/let-functions/...
-	// heavily — most failures are P1+ features, not parser bugs.
-	const minPassRate = 0.15
+	// Regression baseline: the parser must handle at least this fraction of
+	// real-world queries. Bumped to 90% after the P1/P2 operator round
+	// (mv-expand/make-series/parse/render/consume/getschema/serialize/externaldata/
+	// evaluate/materialize-pipeline-arg/passthroughs). The remaining failures
+	// are genuinely complex P2 constructs (function lambdas, datatable-source,
+	// union-as-function) tracked in frontend/NOTES.md §6.
+	const minPassRate = 0.90
 	if got := float64(passed) / float64(total); got < minPassRate {
 		t.Errorf("corpus pass rate %.0f%% below baseline %.0f%% — regression or corpus grew; investigate failing queries", 100*got, 100*minPassRate)
 	}

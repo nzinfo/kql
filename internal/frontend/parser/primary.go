@@ -28,14 +28,21 @@ func (p *Parser) parsePrimary() ast.Expr {
 		// a function call. parseIdentFollowed handles the call form.
 		return p.parseIdentFollowed()
 
-	// Parenthesised expression or sub-expression
+	// Parenthesised expression, list, or sub-pipeline (the last appears inside
+	// function calls like materialize(T | where ...) and as a join's right).
 	case token.LPAREN:
+		// If the parens hold a sub-pipeline (`( <src> | ... )`), parse a full
+		// pipeline and wrap it — needed for materialize(T | ...), and for any
+		// call argument that is a tabular pipeline.
+		if p.isParenPipeline() {
+			lparen := p.pos
+			p.next()
+			pipe := p.parsePipeline()
+			rparen := p.expect(token.RPAREN)
+			return &ast.ParenExpr{Lparen: lparen, X: pipe, Rparen: rparen}
+		}
 		lparen := p.pos
 		p.next()
-		// Could be a grouped expr `( e )` or a list `( e1, e2 )` (used by in,
-		// but those are handled in parseInList; a bare paren list isn't valid
-		// as a primary in KQL, so treat the first element as start of an expr
-		// and see if a comma follows).
 		first := p.ParseExpr()
 		if p.cur == token.COMMA {
 			elems := []ast.Expr{first}
@@ -109,7 +116,9 @@ func (p *Parser) parseIdentFollowed() ast.Expr {
 
 // parseCall parses the argument list of a function call. name is the function
 // expression (typically an *ast.Ident). Handles named arguments `name = expr`
-// via NamedExpr, matching g4 argumentExpression → namedExpression.
+// via NamedExpr, matching g4 argumentExpression → namedExpression. A call
+// argument may also be a SUB-PIPELINE when the next tokens form `(<src> | ...)`
+// — needed for materialize(T | where ...), invoke(), and similar.
 func (p *Parser) parseCall(fun ast.Expr) ast.Expr {
 	lparen := p.expect(token.LPAREN)
 	var args []ast.Expr
@@ -123,13 +132,30 @@ func (p *Parser) parseCall(fun ast.Expr) ast.Expr {
 	return &ast.CallExpr{Fun: fun, Lparen: lparen, Args: args, Rparen: rparen}
 }
 
-// parseArgument parses one call argument, which may be a named binding
-// `name = expr` (g4 namedExpression) or a bare expression / `*`.
+// parseArgument parses one call argument. May be a named binding `name = expr`,
+// a `*`, a bare expression, or a SUB-PIPELINE when the content forms
+// `<source> | <op> ...` — needed for materialize(T | where ...), invoke(), etc.
+// (Note: the pipeline appears DIRECTLY inside the call parens, not wrapped in
+// another paren pair.)
 func (p *Parser) parseArgument() ast.Expr {
 	if p.cur == token.MUL {
 		pos := p.pos
 		p.next()
 		return &ast.NamedExpr{Expr: &ast.StarExpr{Star: pos}}
+	}
+	// Sub-pipeline argument wrapped in its own parens: `(T | ...)`.
+	if p.cur == token.LPAREN && p.isParenPipeline() {
+		lparen := p.pos
+		p.next()
+		pipe := p.parsePipeline()
+		rparen := p.expect(token.RPAREN)
+		return &ast.ParenExpr{Lparen: lparen, X: pipe, Rparen: rparen}
+	}
+	// Sub-pipeline argument WITHOUT wrapping parens: `T | ...` (materialize).
+	// Detect by lookahead: does an expression here get followed by `|`?
+	if p.isPipelineArg() {
+		pipe := p.parsePipeline()
+		return &ast.NamedExpr{Expr: pipe}
 	}
 	// Named argument?  IDENT '=' expr   (lookahead without committing)
 	if p.cur == token.IDENT {
@@ -144,6 +170,18 @@ func (p *Parser) parseArgument() ast.Expr {
 		p.restore(s) // not a named arg; fall through
 	}
 	return &ast.NamedExpr{Expr: p.ParseExpr()}
+}
+
+// isPipelineArg reports whether the tokens starting at the current position
+// form `<source-expr> | <op>` — i.e. a bare pipeline usable as a call argument
+// (materialize(T | where ...)). Lookahead via save/restore.
+func (p *Parser) isPipelineArg() bool {
+	s := p.save()
+	// Parse one source expression; a following PIPE means it's a pipeline arg.
+	_ = p.ParseExpr()
+	isPipe := p.cur == token.PIPE
+	p.restore(s)
+	return isPipe
 }
 
 // parseIdentLike parses an IDENT or a keyword used as a name (KQL permits

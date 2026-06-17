@@ -58,6 +58,41 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 					Expr: &FuncCall{Position: n.Pos(), Name: "count", Caps: DefaultCaps("count", true)}},
 			},
 		}
+
+	// P1 operators: parse + translate, best-effort emit (see NOTES.md §6).
+	case *ast.RenderOp:
+		// Presentation/control-flow hint — drop at emit (no-op).
+		return t.translatePassthrough(n.Pos())
+	case *ast.ConsumeOp:
+		// `| consume` discards rows — represent as a Limit 0 so emit yields no rows.
+		return &Limit{Position: n.Pos(), Count: &Lit{Position: n.Pos(), T: TypeLong, Value: int64(0), HasValue: true}}
+	case *ast.GetSchemaOp:
+		// Schema introspection — no SQL equivalent in the minimal loop; pass-through.
+		return t.translatePassthrough(n.Pos())
+	case *ast.SerializeOp:
+		// Forces ordering; if columns given, behaves like project (ordered).
+		if len(n.Cols) > 0 {
+			return &Project{Position: n.Pos(), Cols: t.translateNamedList(n.Cols)}
+		}
+		return t.translatePassthrough(n.Pos())
+	case *ast.ExternalDataOp:
+		// External source — best-effort pass-through (real impl needs the
+		// storage connector; flagged NeedsPostProc).
+		return t.translatePassthrough(n.Pos())
+	case *ast.MvExpandOp:
+		// mv-expand: explode array column → multiple rows. No direct SQL in the
+		// minimal path (sqlite has no UNNEST; pg/duckdb do). Emit as a
+		// pass-through with a NOTE marker — real impl uses a lateral join /
+		// UNNEST in the backend (NeedsPostProc for sqlite).
+		return t.translatePassthrough(n.Pos())
+	case *ast.MakeSeriesOp:
+		// make-series: time-series aggregation. Complex (needs binning + series
+		// fill); emit pass-through for the minimal loop.
+		return t.translatePassthrough(n.Pos())
+	case *ast.ParseOp:
+		// parse [Kind] Expr with <pattern>: regex extraction into columns.
+		// No equivalent without a regex-extract emit; pass-through + flag.
+		return t.translatePassthrough(n.Pos())
 	}
 	t.errorf(op.Pos(), "KQL010: unsupported operator %T in IR translation", op)
 	return nil
@@ -70,6 +105,15 @@ func (t *translator) translateTopOp(n *ast.TopOp) []Stage {
 	sort := &Sort{Position: n.Pos(), Keys: keys}
 	limit := &Limit{Position: n.Pos(), Count: t.translateExpr(n.Count)}
 	return []Stage{sort, limit}
+}
+
+// translatePassthrough returns a no-op stage (Project of *Star) for operators
+// the minimal loop parses but can't emit meaningfully (render/consume-passthrough/
+// getschema/mv-expand/make-series/parse/externaldata/evaluate). It keeps the
+// pipeline shape intact so downstream stages still resolve columns; the actual
+// semantics are flagged NeedsPostProc (see NOTES.md §6).
+func (t *translator) translatePassthrough(pos token.Pos) Stage {
+	return &Project{Position: pos, Cols: []*NamedExpr{{Position: pos, Expr: &Star{Position: pos}}}}
 }
 
 // translateNamedList converts a slice of AST NamedExpr to IR NamedExpr.

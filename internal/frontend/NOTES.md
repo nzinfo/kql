@@ -239,8 +239,8 @@ let 的 RHS 若无 `|`，回退为纯标量 Expr（`let n = 5` 的 Expr 是 Basi
 提取器用 go/ast walker，见 `testdata/corpus/README.md`。
 
 **回归测试**：`pkg/kql/corpus_test.go`
-- `TestCorpusCoverage`：全量 89 个查询过 parse→translate→emit，记录通过率（**当前 64/89 = 72%**）。
-- `TestCorpusP0Subset`：排除 P1+ 算子（parse/mv-expand/make-series/consume/getschema/...）后的 P0 子集，要求 ≥90%（**当前 61/67 = 91%**）。
+- `TestCorpusCoverage`：全量 89 个查询过 parse→translate→emit，记录通过率（**当前 83/89 = 93%**）。
+- `TestCorpusP0Subset`：排除 P1+ 算子（parse/mv-expand/make-series/consume/getschema/...）后的 P0 子集，要求 ≥90%（**当前 65/67 = 97%**）。
 - 这两个测试是 parser/translator 的回归护栏：任何能解析的查询不能因为重构而退步。
 
 **一轮修复（39%→72%，2026-06-17）从语料挖出的真实缺口**：
@@ -250,11 +250,26 @@ let 的 RHS 若无 `|`，回退为纯标量 Expr（`let n = 5` 的 Expr 是 Basi
 3. **数组字面量 `[...]`**：`dynamic([...])` 和独立数组。`parsePrimary` 新增 `case token.LBRACKET` → ListExpr。（影响 7 个查询，最大单一缺口）
 4. **`in~` / INCI token**：case-insensitive IN（g4 `IN_CI: 'in~'`）。原 lexer 只处理 `!in~`，正向 `in~` 把 `~` 留成游离 token → ILLEGAL。token 表加 INCI，scanIdentifier 在识别到 IN 后检查尾随 `~` 升级为 INCI。emit 把 `in~`/`has_any`/`has_all` 都按 IN-list 处理。
 
-## 6. 语料遗留缺口（下一轮目标）
+## 6. P1/P2 算子 + 语料遗留缺口
 
-剩余 25 个 parse 失败分类：
-- **真 P1+ 算子**（占多数）：`parse`/`parse-where`、`make-series`、`mv-expand`、`externaldata`、`partition`、`materialize`、`datatable`、`consume`/`getschema`/`serialize`、`render`、函数式 `let f(x)=...`。
-- **`materialize(P | ...)`**：函数调用带管道参数（73）。→ parseCall 需识别"管道参数"。
-- **`\` 字符**（54）：verbatim 串里的反斜杠边界。→ lexer 边界 case。
-- **`has_all` 精确语义**：当前近似为 IN 超集，应改成 `X IN (...) AND X IN (...)` 重复。
-- **case-insensitive IN 精确化**：`in~` 应每元素 `COLLATE NOCASE`，当前近似为普通 IN。
+**P1/P2 算子已落地（85%→93%）**：mv-expand / make-series / parse / parse-where /
+render / consume / getschema / serialize / externaldata / evaluate 全部能解析。
+其中多数用 **passthrough 策略**（translate 成 Project\{\*\}，emit 出 SELECT \*），
+保证下游 stage 的列引用不断；真实语义（mv-expand 的 UNNEST、make-series 的时序填充、
+parse 的 regex 抽取）留到各后端线 + NeedsPostProc 标记时实现。
+
+**关键解析修复**：
+- **函数调用的管道参数**：`materialize(T | where ...)` —— 管道直接出现在调用括号里
+  （不是包在另一层 `()` 里）。`parseArgument` 用 `isPipelineArg` lookahead 检测
+  `<expr> |`，命中则按管道解析。也覆盖 `(T | ...)` 双层括号形式。
+- **P2 算子 passthrough**：top-nested / partition / fork / lookup / facet / sample /
+  sample-distinct / reduce 用 `parsePassthroughOp` 捕获算子名 + 跳过到下一 stage 边界
+  （平衡括号），translate 成 passthrough。
+
+**剩余 6 个 parse 失败（真复杂 P2，下一轮）**：
+- **函数式 lambda `let f = (x:int) {...}`**（22）：`(params) {body}` 语法 + `:` 类型注解。
+- **`datatable(name:type, ...)` 作为 source**（89）：schema 带 `:` 类型。
+- **`union isfuzzy=true (subq)` 作为函数式 source**（02）：union 既算子又函数调用。
+- **`\` 字符**（54）：verbatim 串里的反斜杠边界（lexer edge）。
+- **`| externaldata` storage 子句**（72）：`(`schema`)` 后的 `[StorageAccounts=...]`。
+- 这些都需要更深的 grammar 分支（lambda 体、datatable 求值、union 双重身份）。
