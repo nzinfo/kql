@@ -13,19 +13,35 @@
 | **F2** AST 骨架 | `ad4cce9` | `ast/`（Node/Expr/Stmt/Operator + P0 节点 + Visitor） | 编译期接口断言 ✅ |
 | **F3** parser 表达式 | `88b6b98` | `parser/`（g4 优先级阶梯）、`diagnostic/`（F6 提前） | 表达式优先级/字面量/函数 ✅ |
 | **F4** parser tabular P0 | `e1aaf45` | `parser/`（pipeline + 全部 P0 算子）+ keyword round-trip 审计 | 完整 P0 查询解析到 AST ✅ |
+| **I1** IR 核心 | `_next_` | `internal/ir/`（Pipeline/Stage/Source/Expr/Type/ColID/Caps/Visitor） | 接口断言 + visitor 覆盖 ✅ |
+| **I2** AST→IR 翻译器 | `_next_` | `internal/ir/translate*.go`（P0 算子，字符串列名占位） | 端到端翻译 + 类型/聚合 ✅ |
+| **B1/B5-min** sqlite 后端 + **pkg/kql** | `_next_` | `internal/backend/` + `sqlite/`（emit IR→SQL）+ `pkg/kql`（Exec API） | **e2e 最小闭环 ✅**：内存 sqlite 建表→KQL→取结果 |
 
-**当前能力**：`T | where x > 0 | extend y = x*2 | summarize count() by y | order by y desc | take 10` 全绿解析到 AST。
-`go test ./...` 全绿。认知持久化在 `claude.md`（导航）+ `internal/frontend/NOTES.md`（语法对齐细节）。
+**🎉 当前能力（e2e 最小闭环已打通）**：
+```go
+res, _ := kql.Exec(ctx, ":memory:", `events | where state == "TEXAS" | summarize total = sum(damage) by state | sort by total desc | take 1`)
+```
+KQL → 解析(F1-F4) → 翻译(I2) → SQLite SQL(sqlite emit) → 执行(modernc.org/sqlite) → 结构化结果。
+覆盖 where/project/extend/take/sort/summarize(含 sum/count/bin)/join/union/distinct/count/top/in/string-op。
+`go test ./...` 全绿（20+ e2e 用例 + 前端/IR 单测）。
 
-## 2. 下一步：已选方向
+**认知持久化**：`claude.md`（导航）+ 各模块 `NOTES.md`（frontend/ir/backend 的对齐细节与坑）。
 
-### → IR 线 I1+I2（**当前进行中**）
+## 2. 下一步
 
-**理由**：DESIGN 的核心是"统一 IR + 多方言后端"，IR 是后端生 SQL 的前提。I1+I2 的依赖（F2/F4）刚满足，是解锁后续 B2(pg)/S3 的关键路径。F5(binder)/F7(builtin) 可在 IR 之后并行补。
+### e2e 最小闭环已完成 ✅（2026-06-17）
 
-- **I1**（`internal/ir/`）：Pipeline/Stage/Expr 接口 + 基础类型 + ColID + 能力位。详见 `docs/phases/ir/I1-core.md`。
-- **I2**（`internal/ir/translate*.go`）：AST → IR 翻译，P0 算子全覆盖。详见 `docs/phases/ir/I2-translate.md`。
-- **I2 的依赖缺口**：I2 文档说依赖 F5（binder 提供列 ID）+ F7（builtin Caps）。**先做 I2 的简化版**：翻译器先用字符串列名占位（与 rust-kql 一致），ColID 绑定推迟到 F5 接入后再回填；FuncCall 能力位先用默认值，F7 接入后再填。这样 I1+I2 不阻塞于 F5/F7。
+KQL 能从内存 sqlite 查询数据。接下来的优先级（待用户确认，以下为建议）：
+
+1. **B2 pg 后端**：复用 sqlite emit 结构，换 `$1` 占位符 + pg 类型映射 + 真实连接。
+   这是"首次能连真实库"的里程碑。
+2. **F5 binder**：ColID 绑定 + 列/函数存在性校验。让查询在执行前校验列名，
+   错误更友好；也为 optimizer 谓词下推铺路。
+3. **S1/S2/S3 shell**：`kql -d <dsn> '查询'` CLI，首次命令行可跑。
+4. **F7 builtin**：380+ 函数签名 + 能力位，让 FuncCall.Caps 精确化。
+5. **扩 parser P1/P2**：mv-expand/parse/make-series/scan 等。
+
+> 原 I2 章节的"F5/F7 占位"说明已落地：翻译器用字符串列名 + DefaultCaps 占位跑通了 e2e。
 
 ## 3. 被推迟的方向（backlog）
 

@@ -92,10 +92,18 @@ kql/
 | F1 词法层 | ✅ 完成 | `token/`（枚举+Position+大小写不敏感 Lookup + round-trip 审计）、`lexer/`（金标准对齐、~120 MB/s）、benchmark |
 | F2 AST 骨架 | ✅ 完成 | `ast/`（Node/Expr/Stmt/Operator 接口 + P0 节点 + Visitor）、测试 |
 | F3 parser 表达式 | ✅ 完成 | `parser/`（g4 优先级阶梯、save/restore 回溯）、`diagnostic/`（F6 提前）、测试 |
-| F4 parser tabular P0 | ✅ 完成 | `parser/`（pipeline + where/project/extend/take/sort/summarize/join/union/distinct/count/top/let）、端到端测试 |
+| F4 parser tabular P0 | ✅ 完成 | `parser/`（pipeline + 全部 P0 算子）、端到端测试 |
 | F5–F7 | ⏳ 待做 | binder/builtin（diagnostic 已在 F3 完成） |
 
-**已完成**：F1–F4，前端能解析完整 P0 查询到 AST。**下一批**：F5 binder（名称解析/类型推断/列绑定）或转入 IR 线。语法对齐笔记见 `internal/frontend/NOTES.md`。
+### IR + Backend 线
+| 阶段 | 状态 | 产出 |
+|---|---|---|
+| I1 IR 核心 | ✅ 完成 | `internal/ir/`（Pipeline/Stage/Source/Expr/Type/ColID/Caps/Visitor） |
+| I2 AST→IR 翻译 | ✅ 完成 | `internal/ir/translate*.go`（P0 算子，字符串列名占位） |
+| B1/B5-min sqlite + pkg/kql | ✅ 完成 | `internal/backend/sqlite/`（IR→SQLite SQL）+ `pkg/kql` Exec API |
+
+**🎉 e2e 最小闭环已打通**：`kql.Exec(ctx, ":memory:", "events | where ... | summarize ...")` 能从内存 sqlite 查出数据。
+`go test ./...` 全绿。详见 `docs/PROGRESS.md`。**下一步候选**：B2 pg 后端 / F5 binder / shell CLI / F7 builtin。
 
 ## 6. 常用命令
 

@@ -159,6 +159,20 @@ func (c *Case) Type() Type { return c.T }
 // Pos returns the conditional position.
 func (c *Case) Pos() token.Pos { return c.Position }
 
+// List is a parenthesised comma-separated list of expressions, used as the
+// right operand of IN/!in and as multi-value forms. Distinct from a single expr.
+type List struct {
+	Position token.Pos
+	Elems    []Expr
+	T        Type // TypeUnknown (a list has no single type)
+}
+
+// Type returns TypeUnknown.
+func (l *List) Type() Type { return l.T }
+
+// Pos returns the list position.
+func (l *List) Pos() token.Pos { return l.Position }
+
 // Expr + Node markers.
 func (l *Lit) node()      {}
 func (l *Lit) expr()      {}
@@ -178,4 +192,6 @@ func (i *Index) node()    {}
 func (i *Index) expr()    {}
 func (c *Case) node()     {}
 func (c *Case) expr()     {}
+func (l *List) node()     {}
+func (l *List) expr()     {}
 func (n *NamedExpr) node() {} // NamedExpr is a Node but not an Expr
