@@ -194,8 +194,14 @@ func (e *emitter) emitBreakpointDirectPG(st ir.Stage, from, alias string) (strin
 		if len(onParts) > 0 {
 			on = strings.Join(onParts, " AND ")
 		}
-		return fmt.Sprintf("SELECT %s.*, %s.* FROM %s AS %s %s JOIN (%s) AS %s ON %s",
-			alias, rightAlias, from, alias, joinType, rightSQL, rightAlias, on), nil
+		// O4: emit a pg_hint_plan comment when the optimizer chose a join method.
+		// The hint is silently ignored if pg_hint_plan isn't installed (graceful
+		// degrade). Hints reference the relation aliases (_sN, _sN_j) which are
+		// the CTE names in scope. IndexLookup is structural (deferred emit — no
+		// hint; the IN-list rewrite is a future PostProc path).
+		hint := joinHintPG(s.Hint, alias, rightAlias)
+		return fmt.Sprintf("%sSELECT %s.*, %s.* FROM %s AS %s %s JOIN (%s) AS %s ON %s",
+			hint, alias, rightAlias, from, alias, joinType, rightSQL, rightAlias, on), nil
 	}
 	return e.emitStage(fmt.Sprintf("SELECT * FROM %s", from), st)
 }
@@ -284,4 +290,28 @@ func (e *emitter) emitMergedSelectPG(stages []ir.Stage, from, alias string) (str
 		sql += " LIMIT " + limitExpr
 	}
 	return sql, nil
+}
+
+// joinHintPG returns a pg_hint_plan comment prefix for the optimizer-chosen
+// join method (O4), or "" when no hint applies. The comment is placed before
+// the SELECT so pg_hint_plan associates it with the join. pg_hint_plan uses
+// relation aliases (the CTE names _sN, _sN_j) as hint targets.
+//
+// Hints:
+//   /*+ HashJoin(left right) */     — prefer hash join
+//   /*+ NestLoop(left right) */     — prefer nested loop
+//   /*+ MergeJoin(left right) */    — prefer merge join
+//
+// JoinHintNone → "" (let pg's planner decide). JoinHintIndexLookup is a
+// structural variant with no hint equivalent (its IN-list rewrite is deferred).
+func joinHintPG(hint ir.JoinHint, leftAlias, rightAlias string) string {
+	switch hint {
+	case ir.JoinHintHash:
+		return fmt.Sprintf("/*+ HashJoin(%s %s) */ ", leftAlias, rightAlias)
+	case ir.JoinHintNestLoop:
+		return fmt.Sprintf("/*+ NestLoop(%s %s) */ ", leftAlias, rightAlias)
+	case ir.JoinHintMerge:
+		return fmt.Sprintf("/*+ MergeJoin(%s %s) */ ", leftAlias, rightAlias)
+	}
+	return "" // JoinHintNone, JoinHintIndexLookup, or unknown → no hint
 }

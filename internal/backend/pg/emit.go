@@ -251,8 +251,11 @@ func (e *emitter) emitJoin(from, prev string, s *ir.Join) (string, error) {
 	if len(onParts) > 0 {
 		on = strings.Join(onParts, " AND ")
 	}
-	return fmt.Sprintf("SELECT * FROM %s %s JOIN (%s) AS %s_j ON %s",
-		from, joinType, rightSQL, prev, on), nil
+	// O4: pg_hint_plan comment for the optimizer-chosen join method (same as
+	// the CTE path; see emit_cte.go joinHintPG).
+	hint := joinHintPG(s.Hint, leftAlias, rightAlias)
+	return fmt.Sprintf("%sSELECT * FROM %s %s JOIN (%s) AS %s_j ON %s",
+		hint, from, joinType, rightSQL, prev, on), nil
 }
 
 func (e *emitter) emitUnion(from, prev string, s *ir.Union) (string, error) {
