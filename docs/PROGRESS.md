@@ -19,7 +19,7 @@
 | **S5-min** CLI | `e77416e` | `cmd/kql/`（main/output/ir：run/validate/explain + csv/json/table） | **命令行可跑 ✅** |
 | **T1–T3-min** 语料回归 | `_next_` | `pkg/kql/testdata/corpus/sentinel/`（89 真实查询）+ `corpus_test.go` | **parse→translate→emit 覆盖 93%**（39%→72%→93%；P1/P2 算子 + 函数管道参数） |
 | **F7-min** builtin 函数表 | `_next_` | `internal/frontend/builtin/`（Spec 表 + SQLite 模板）+ emit 接线 + 执行测试 | **常见函数能执行**：ago/tostring/iff/dcount/countif/make_set/strcat/coalesce/sum/avg/...（9 个执行用例全绿） |
-| **F5-min** binder | `_next_` | `internal/frontend/binder/`（Schema 流 + 列校验）+ sqlite SchemaProvider | **友好列报错**：未知列在执行前报 `KQL001: column X not found`（8 个单测 + 0 执行回归） |
+| **F5** binder + **ColID 绑定** | `_next_` | `internal/frontend/binder/`（Schema→ColBinding + 大小写不敏感 Lookup + ColID 分配 + 物理名回写）| **pg 大小写折叠根治**：`EventType` 在 pg 存为 `eventtype` 也能正确解析执行（DESIGN §5 落地） |
 | **O0** stats catalog | `_next_` | `internal/optimizer/stats/`（Catalog/Table/ColumnStats/Index/CorrVs/CostModel + 置信度 + YAML 加载器）+ 示例 + 10 单测 | **统计描述可加载**：pg_analyze/manual/sampling 源、缺字段降级、CorrVs 可选、未知字段告警 |
 | **B2-min** pg 后端 | `_next_` | `internal/backend/pg/`（emit $N 占位符 + ILIKE + pg 函数）+ docker-compose.pg.yml + 10 pg e2e | **首次连真实生产库**：KQL → Docker PostgreSQL（pgx 纯 Go），10 用例全绿（sourceOnly/where/take/summarize/sort/distinct/in/ILIKE/binder） |
 

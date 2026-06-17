@@ -1,70 +1,98 @@
 // Package binder resolves column references and validates a KQL pipeline
-// against a known schema, producing friendly errors (KQL009 unknown column)
-// BEFORE execution — instead of letting a raw SQLite "no such column" surface
-// at runtime with no KQL context.
+// against a known schema, assigning physical ColIDs to each *ir.Col reference.
 //
-// Scope (F5-minimal): the binder walks an *ir.Pipeline stage by stage, tracking
-// the output schema (set of column names) of each stage. It resolves each
-// *ir.Col reference against the current stage's input schema, emitting a
-// diagnostic for unknown columns. It does NOT yet do full type inference or
-// physical ColID assignment (those come with the optimizer); for the minimal
-// loop it validates names so users get "column 'foo' not found in events" with
-// the table/operator context, not a SQLite parse-time error.
+// ColID binding (DESIGN.md §5) is the multi-dialect abstraction: a column is
+// referenced by a stable integer (ColID) within a pipeline, not by its string
+// name. The binder allocates ColIDs as it walks the pipeline and resolves each
+// *ir.Col name CASE-INSENSITIVELY against the current stage's schema, so a KQL
+// reference like `EventType` resolves to the same ColID whether the backend
+// stored it as `EventType` (sqlite) or `eventtype` (PostgreSQL lowercased it).
+// It writes the backend's PHYSICAL name back into Col.Name, so emit produces
+// dialect-correct SQL without any per-backend special-casing.
 //
-// Source schema: provided by the caller (the backend knows its tables). A
-// nil/empty schema makes the binder permissive (no unknown-column errors) so
-// it can run against sources whose schema isn't introspected.
+// Scope: ColID allocation + name resolution + unknown-column errors (KQL001).
+// NOT yet: type inference (Col.T stays Unknown), join $left/$right
+// qualification (left-biased — tracked), PhysicalPlan integration.
 package binder
 
 import (
 	"fmt"
+	"strings"
 
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/token"
 	"nzinfo/kql/internal/ir"
 )
 
-// Schema is an ordered set of column names (the output shape of a stage).
-type Schema struct {
-	Cols []string // in declaration order
+// ColBinding is one column's binding in a schema: its ColID plus the physical
+// name (backend's stored case) and display name (KQL source spelling).
+type ColBinding struct {
+	ColID        ir.ColID
+	PhysicalName string // backend-stored name (pg lowercases; sqlite keeps) — emit uses this
+	DisplayName  string // KQL source spelling — diagnostics/pretty-print
 }
 
-// Has reports whether name is in the schema (case-sensitive — KQL identifiers
-// are case-sensitive; the binder matches exactly to surface typos).
-func (s *Schema) Has(name string) bool {
+// Schema is an ordered set of column bindings (the output shape of a stage).
+// Nil schema is permissive (Lookup returns true) so binding can run against
+// unintrospectable sources without over-rejecting.
+type Schema struct {
+	Cols []ColBinding
+}
+
+// Lookup resolves name CASE-INSENSITIVELY against the schema (the fix for pg
+// case-folding: `EventType` matches `eventtype`). Returns the binding + true
+// on hit. A nil schema is permissive (returns a synthetic binding, true).
+func (s *Schema) Lookup(name string) (ColBinding, bool) {
 	if s == nil {
-		return true // permissive: unknown schema → assume present
+		// Permissive: unknown schema → assume present, allocate no ColID
+		// (ColID stays Invalid; emit falls back to the name as-is).
+		return ColBinding{PhysicalName: name, DisplayName: name}, true
 	}
 	for _, c := range s.Cols {
-		if c == name {
-			return true
+		if strings.EqualFold(c.PhysicalName, name) || strings.EqualFold(c.DisplayName, name) {
+			return c, true
 		}
 	}
-	return false
+	return ColBinding{}, false
+}
+
+// Has reports whether name resolves (case-insensitive). Kept for compatibility.
+func (s *Schema) Has(name string) bool {
+	_, ok := s.Lookup(name)
+	return ok
 }
 
 // SchemaProvider resolves a table name to its column schema. The sqlite
-// backend implements this via PRAGMA table_info; a nil provider makes binding
-// permissive (no unknown-column checks).
+// backend implements this via PRAGMA table_info (returns original case); pg
+// via information_schema.columns (returns lowercased case). The binder threads
+// these physical names through so emit produces dialect-correct SQL.
 type SchemaProvider interface {
 	Schema(table string) (*Schema, error)
 }
 
-// Bind walks the pipeline validating column references. Diagnostics for
-// unknown columns are added to diags. Returns the pipeline unchanged (the
-// binder is a validator, not a rewriter, for the minimal loop).
+// Bind walks the pipeline allocating ColIDs and resolving column references.
+// Each *ir.Col that resolves gets its ColID set and its Name rewritten to the
+// backend's physical name. Unknown columns produce KQL001 diagnostics. Returns
+// the pipeline (mutated in place) — the binder is a resolver/rewriter.
 func Bind(pipe *ir.Pipeline, prov SchemaProvider, diags *diagnostic.List) (*ir.Pipeline, error) {
 	b := &binder{prov: prov, diags: diags}
 	return b.bindPipeline(pipe)
 }
 
 type binder struct {
-	prov SchemaProvider
+	prov  SchemaProvider
 	diags *diagnostic.List
+	next  ir.ColID // ColID allocator counter (1-based; 0 = Invalid)
+}
+
+// alloc assigns a fresh ColID.
+func (b *binder) alloc() ir.ColID {
+	b.next++
+	return b.next
 }
 
 // bindPipeline resolves the source schema then walks each stage, threading the
-// output schema forward.
+// output schema (with ColIDs) forward.
 func (b *binder) bindPipeline(pipe *ir.Pipeline) (*ir.Pipeline, error) {
 	if pipe == nil {
 		return nil, nil
@@ -76,29 +104,36 @@ func (b *binder) bindPipeline(pipe *ir.Pipeline) (*ir.Pipeline, error) {
 	return pipe, nil
 }
 
-// sourceSchema returns the column set of the pipeline source. For a table
-// reference it queries the provider; for other sources it returns nil
-// (permissive). nil schema ⇒ Has() always true (no unknown-col errors).
+// sourceSchema returns the column bindings of the pipeline source. For a table
+// reference it queries the provider and allocates a ColID per physical column;
+// the PhysicalName carries the backend's stored case.
 func (b *binder) sourceSchema(src ir.Source) *Schema {
 	if src == nil {
 		return nil
 	}
 	if tbl, ok := src.(*ir.SourceTable); ok {
 		if b.prov == nil {
-			return nil
+			return nil // permissive
 		}
 		s, err := b.prov.Schema(tbl.Table)
 		if err != nil {
 			b.errorf(tbl.Pos(), "cannot resolve schema for table %q: %v", tbl.Table, err)
 			return nil
 		}
+		// Allocate a ColID per column; keep the provider's physical name.
+		for i := range s.Cols {
+			s.Cols[i].ColID = b.alloc()
+			if s.Cols[i].DisplayName == "" {
+				s.Cols[i].DisplayName = s.Cols[i].PhysicalName
+			}
+		}
 		return s
 	}
 	return nil
 }
 
-// bindStage validates column references in a stage against the input schema,
-// then returns the stage's OUTPUT schema (what the next stage sees).
+// bindStage validates column references against the input schema, then returns
+// the stage's OUTPUT schema (with ColIDs threaded forward).
 func (b *binder) bindStage(st ir.Stage, in *Schema) *Schema {
 	switch s := st.(type) {
 	case *ir.Filter:
@@ -121,18 +156,20 @@ func (b *binder) bindStage(st ir.Stage, in *Schema) *Schema {
 		out := &Schema{}
 		for _, c := range s.Cols {
 			b.checkExpr(c.Expr, in)
-			out.Cols = append(out.Cols, projName(c))
+			// Output column: named binding gets a new ColID; a bare Col
+			// reference inherits the source binding's ColID.
+			out.Cols = append(out.Cols, b.projectBinding(c, in))
 		}
 		return out
 	case *ir.Extend:
 		out := &Schema{}
 		if in != nil {
-			out.Cols = append(out.Cols, in.Cols...)
+			out.Cols = append(out.Cols, in.Cols...) // input columns carried forward
 		}
 		for _, c := range s.Cols {
 			b.checkExpr(c.Expr, in)
 			if c.Name != "" {
-				out.Cols = append(out.Cols, c.Name)
+				out.Cols = append(out.Cols, ColBinding{ColID: b.alloc(), PhysicalName: c.Name, DisplayName: c.Name})
 			}
 		}
 		return out
@@ -140,26 +177,22 @@ func (b *binder) bindStage(st ir.Stage, in *Schema) *Schema {
 		out := &Schema{}
 		for _, k := range s.Keys {
 			b.checkExpr(k.Expr, in)
-			out.Cols = append(out.Cols, keyName(k))
+			out.Cols = append(out.Cols, b.namedBinding(k, in))
 		}
 		for _, a := range s.Aggregates {
 			b.checkExpr(a.Expr, in)
-			out.Cols = append(out.Cols, aggName(a))
+			out.Cols = append(out.Cols, b.namedBinding(a, in))
 		}
 		return out
 	case *ir.Join:
-		// Recurse into the right pipeline (own schema); the join's output is
-		// the union of left + right columns (for the minimal binder we don't
-		// resolve ambiguity yet — that's tracked; emit left-biases, which is a
-		// known limitation).
+		// Recurse into the right pipeline (own schema/ColIDs).
 		if s.Right != nil {
 			_, _ = b.bindPipeline(s.Right)
 		}
-		// on-conditions reference left columns; we only check loosely here.
 		for _, c := range s.On {
 			b.checkExpr(c, in)
 		}
-		return in // approx: keep left schema (real impl unions left+right)
+		return in // left-biased (known limitation: $left/$right qualification)
 	case *ir.Union:
 		for _, in2 := range s.Inputs {
 			_, _ = b.bindPipeline(in2)
@@ -169,16 +202,68 @@ func (b *binder) bindStage(st ir.Stage, in *Schema) *Schema {
 	return in
 }
 
-// checkExpr walks an expression validating *ir.Col references against schema.
+// projectBinding builds the output binding for a Project column. A named
+// binding (`s = state`) gets a fresh ColID; a bare column reference inherits
+// the source binding (same ColID, same physical name).
+func (b *binder) projectBinding(n *ir.NamedExpr, in *Schema) ColBinding {
+	if n == nil {
+		return ColBinding{ColID: b.alloc()}
+	}
+	if n.Name != "" {
+		return ColBinding{ColID: b.alloc(), PhysicalName: n.Name, DisplayName: n.Name}
+	}
+	// Bare expression: if it's a single column, inherit its binding.
+	if col, ok := n.Expr.(*ir.Col); ok {
+		if bd, ok := in.Lookup(col.Name); ok {
+			return bd
+		}
+	}
+	return ColBinding{ColID: b.alloc(), PhysicalName: exprName(n.Expr), DisplayName: exprName(n.Expr)}
+}
+
+// namedBinding builds the output binding for a summarize key/agg NamedExpr.
+// Named → fresh ColID + that name; bare col → inherit source binding.
+func (b *binder) namedBinding(n *ir.NamedExpr, in *Schema) ColBinding {
+	if n == nil {
+		return ColBinding{ColID: b.alloc()}
+	}
+	if n.Name != "" {
+		return ColBinding{ColID: b.alloc(), PhysicalName: n.Name, DisplayName: n.Name}
+	}
+	if col, ok := n.Expr.(*ir.Col); ok {
+		if bd, ok := in.Lookup(col.Name); ok {
+			return bd
+		}
+	}
+	return ColBinding{ColID: b.alloc(), PhysicalName: exprName(n.Expr), DisplayName: exprName(n.Expr)}
+}
+
+// exprName returns a display name for a bare expression (used when an unnamed
+// projection/agg can't inherit a column binding).
+func exprName(e ir.Expr) string {
+	if col, ok := e.(*ir.Col); ok {
+		return col.Name
+	}
+	return ""
+}
+
+// checkExpr walks an expression resolving *ir.Col references. On hit it writes
+// the ColID and rewrites Col.Name to the backend's PHYSICAL name (so emit is
+// dialect-correct). On miss it records KQL001.
 func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 	if e == nil {
 		return
 	}
 	switch n := e.(type) {
 	case *ir.Col:
-		if !in.Has(n.Name) {
+		bd, ok := in.Lookup(n.Name)
+		if !ok {
 			b.errorf(n.Pos(), "column %q not found in current scope", n.Name)
+			return
 		}
+		// RESOLVE: stamp the ColID and rewrite to the physical name.
+		n.ColID = bd.ColID
+		n.Name = bd.PhysicalName
 	case *ir.BinOp:
 		b.checkExpr(n.X, in)
 		b.checkExpr(n.Y, in)
@@ -205,24 +290,6 @@ func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 		// leaves — no column refs
 	}
 }
-
-// projName / keyName / aggName return the output column name a NamedExpr
-// contributes. Bare (unnamed) expressions keep "" (so the schema doesn't claim
-// a name they don't have — those columns are emit-only).
-func projName(n *ir.NamedExpr) string {
-	if n == nil {
-		return ""
-	}
-	if n.Name != "" {
-		return n.Name
-	}
-	if c, ok := n.Expr.(*ir.Col); ok {
-		return c.Name
-	}
-	return ""
-}
-func keyName(n *ir.NamedExpr) string  { return projName(n) }
-func aggName(n *ir.NamedExpr) string  { return projName(n) }
 
 func (b *binder) errorf(pos token.Pos, format string, args ...interface{}) {
 	if b.diags == nil {

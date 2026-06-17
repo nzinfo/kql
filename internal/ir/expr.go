@@ -45,12 +45,17 @@ func (l *Lit) Type() Type { return l.T }
 // Pos returns the literal's position.
 func (l *Lit) Pos() token.Pos { return l.Position }
 
-// Col is a column reference bound to a physical ColID. Name is kept for
-// diagnostics/pretty-print only; backends emit by ColID (I1.S3).
+// Col is a column reference bound to a physical ColID. After the binder runs,
+// ColID is set (1-based, pipeline-local) and Name is the backend's PHYSICAL
+// column name (case-corrected to match the stored schema — e.g. pg lowercases
+// unquoted identifiers, so a KQL `EventType` reference becomes Name=`eventtype`
+// when bound against pg). Emit uses Name directly, so each backend emits
+// dialect-correct SQL without special-casing. Pre-bind (ParseTranslate path,
+// or a nil schema provider), ColID is Invalid and Name is the KQL source spelling.
 type Col struct {
 	Position token.Pos
 	ColID    ColID // bound by F5 binder; Invalid pre-bind
-	Name     string
+	Name     string // PHYSICAL name after bind; KQL spelling before
 	T        Type
 }
 

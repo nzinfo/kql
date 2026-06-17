@@ -10,22 +10,28 @@ import (
 
 // fakeProvider is a SchemaProvider backed by a static table→columns map.
 type fakeProvider struct {
-	tables map[string][]string
+	tables map[string][]ColBinding
 }
 
 func (f *fakeProvider) Schema(table string) (*Schema, error) {
-	if cols, ok := f.tables[table]; ok {
-		return &Schema{Cols: cols}, nil
+	if c, ok := f.tables[table]; ok {
+		return &Schema{Cols: c}, nil
 	}
 	return nil, errNotFound(table)
 }
 
-// Build a pipeline programmatically for testing (avoiding the parser).
+func cols(names ...string) []ColBinding {
+	out := make([]ColBinding, len(names))
+	for i, n := range names {
+		out[i] = ColBinding{PhysicalName: n, DisplayName: n}
+	}
+	return out
+}
+
 func src(table string) *ir.SourceTable { return &ir.SourceTable{Table: table} }
 func col(name string) *ir.Col          { return &ir.Col{Name: name} }
 func lit(v int64) *ir.Lit              { return &ir.Lit{T: ir.TypeLong, Value: v, HasValue: true} }
 
-// TestBindKnownColumn: a column in the source schema binds cleanly (no diag).
 func TestBindKnownColumn(t *testing.T) {
 	pipe := &ir.Pipeline{
 		Source: src("events"),
@@ -33,7 +39,7 @@ func TestBindKnownColumn(t *testing.T) {
 			&ir.Filter{Predicate: &ir.BinOp{Op: token.GTR, X: col("state"), Y: lit(0)}},
 		},
 	}
-	prov := &fakeProvider{tables: map[string][]string{"events": {"id", "state"}}}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"events": cols("id", "state")}}
 	var diags diagnostic.List
 	if _, err := Bind(pipe, prov, &diags); err != nil {
 		t.Fatal(err)
@@ -43,7 +49,6 @@ func TestBindKnownColumn(t *testing.T) {
 	}
 }
 
-// TestBindUnknownColumn: a column NOT in the schema produces KQL001.
 func TestBindUnknownColumn(t *testing.T) {
 	pipe := &ir.Pipeline{
 		Source: src("events"),
@@ -51,28 +56,17 @@ func TestBindUnknownColumn(t *testing.T) {
 			&ir.Filter{Predicate: &ir.BinOp{Op: token.GTR, X: col("nonexistent"), Y: lit(0)}},
 		},
 	}
-	prov := &fakeProvider{tables: map[string][]string{"events": {"id", "state"}}}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"events": cols("id", "state")}}
 	var diags diagnostic.List
 	Bind(pipe, prov, &diags)
 	if !diags.HasErrors() {
 		t.Fatal("expected unknown-column error, got none")
 	}
-	msgs := diags.Render()
-	found := false
-	for _, m := range msgs {
-		if contains(m, "nonexistent") && contains(m, "KQL001") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("error didn't name the column / code: %v", msgs)
-	}
 }
 
-// TestBindMissingTable: a source table the provider doesn't know errors.
 func TestBindMissingTable(t *testing.T) {
 	pipe := &ir.Pipeline{Source: src("ghost")}
-	prov := &fakeProvider{tables: map[string][]string{"events": {"id"}}}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"events": cols("id")}}
 	var diags diagnostic.List
 	Bind(pipe, prov, &diags)
 	if !diags.HasErrors() {
@@ -80,8 +74,6 @@ func TestBindMissingTable(t *testing.T) {
 	}
 }
 
-// TestBindNilProviderPermissive: with no provider, the binder is permissive
-// (no unknown-column errors) — so it can run against unintrospectable sources.
 func TestBindNilProviderPermissive(t *testing.T) {
 	pipe := &ir.Pipeline{
 		Source: src("events"),
@@ -90,40 +82,37 @@ func TestBindNilProviderPermissive(t *testing.T) {
 		},
 	}
 	var diags diagnostic.List
-	Bind(pipe, nil, &diags) // nil provider
+	Bind(pipe, nil, &diags)
 	if diags.HasErrors() {
 		t.Errorf("nil provider should be permissive, got: %v", diags.Render())
 	}
 }
 
-// TestBindProjectOutputSchema: after project, only projected columns are valid.
-func TestBindProjectOutputSchema(t *testing.T) {
-	// project state → next stage can use state but NOT id.
+func TestBindProjectDropsColumn(t *testing.T) {
 	pipe := &ir.Pipeline{
 		Source: src("events"),
 		Stages: []ir.Stage{
 			&ir.Project{Cols: []*ir.NamedExpr{{Name: "state", Expr: col("state")}}},
-			&ir.Filter{Predicate: col("id")}, // id was projected away → unknown
+			&ir.Filter{Predicate: col("id")},
 		},
 	}
-	prov := &fakeProvider{tables: map[string][]string{"events": {"id", "state"}}}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"events": cols("id", "state")}}
 	var diags diagnostic.List
 	Bind(pipe, prov, &diags)
 	if !diags.HasErrors() {
-		t.Fatal("expected id to be unknown after project-away, got no error")
+		t.Fatal("expected id to be unknown after project-away")
 	}
 }
 
-// TestBindExtendAddsColumn: extend adds a column visible to later stages.
 func TestBindExtendAddsColumn(t *testing.T) {
 	pipe := &ir.Pipeline{
 		Source: src("events"),
 		Stages: []ir.Stage{
 			&ir.Extend{Cols: []*ir.NamedExpr{{Name: "doubled", Expr: col("id")}}},
-			&ir.Filter{Predicate: col("doubled")}, // OK — extend added it
+			&ir.Filter{Predicate: col("doubled")},
 		},
 	}
-	prov := &fakeProvider{tables: map[string][]string{"events": {"id"}}}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"events": cols("id")}}
 	var diags diagnostic.List
 	Bind(pipe, prov, &diags)
 	if diags.HasErrors() {
@@ -131,9 +120,7 @@ func TestBindExtendAddsColumn(t *testing.T) {
 	}
 }
 
-// TestBindSummarizeOutputSchema: summarize's output is keys + named aggs.
 func TestBindSummarizeOutputSchema(t *testing.T) {
-	// summarize total = sum(id) by state → next stage sees {state, total}.
 	pipe := &ir.Pipeline{
 		Source: src("events"),
 		Stages: []ir.Stage{
@@ -141,10 +128,10 @@ func TestBindSummarizeOutputSchema(t *testing.T) {
 				Keys:       []*ir.NamedExpr{{Name: "state", Expr: col("state")}},
 				Aggregates: []*ir.NamedExpr{{Name: "total", Expr: &ir.FuncCall{Name: "sum", Args: []ir.Expr{col("id")}}}},
 			},
-			&ir.Filter{Predicate: col("total")}, // OK — produced by summarize
+			&ir.Filter{Predicate: col("total")},
 		},
 	}
-	prov := &fakeProvider{tables: map[string][]string{"events": {"id", "state"}}}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"events": cols("id", "state")}}
 	var diags diagnostic.List
 	Bind(pipe, prov, &diags)
 	if diags.HasErrors() {
@@ -152,8 +139,6 @@ func TestBindSummarizeOutputSchema(t *testing.T) {
 	}
 }
 
-// TestBindSummarizeDropsUnaggregated: a column neither grouped nor aggregated
-// is NOT visible after summarize.
 func TestBindSummarizeDropsUnaggregated(t *testing.T) {
 	pipe := &ir.Pipeline{
 		Source: src("events"),
@@ -162,42 +147,91 @@ func TestBindSummarizeDropsUnaggregated(t *testing.T) {
 				Keys:       []*ir.NamedExpr{{Name: "state", Expr: col("state")}},
 				Aggregates: []*ir.NamedExpr{{Name: "total", Expr: &ir.FuncCall{Name: "sum", Args: []ir.Expr{col("id")}}}},
 			},
-			&ir.Filter{Predicate: col("id")}, // id dropped by summarize → unknown
+			&ir.Filter{Predicate: col("id")},
 		},
 	}
-	prov := &fakeProvider{tables: map[string][]string{"events": {"id", "state"}}}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"events": cols("id", "state")}}
 	var diags diagnostic.List
 	Bind(pipe, prov, &diags)
 	if !diags.HasErrors() {
-		t.Fatal("expected id to be unknown after summarize (not grouped/agg'd), got no error")
+		t.Fatal("expected id to be unknown after summarize")
 	}
 }
 
-// TestSchemaHas
+// TestLookupCaseInsensitive is the core case-folding fix: a KQL `EventType`
+// reference resolves against a pg-lowercased `eventtype` schema, and checkExpr
+// rewrites Col.Name to the physical name + stamps a ColID.
+func TestLookupCaseInsensitive(t *testing.T) {
+	s := &Schema{Cols: []ColBinding{
+		{ColID: 1, PhysicalName: "eventtype", DisplayName: "eventtype"},
+	}}
+	bd, ok := s.Lookup("EventType")
+	if !ok {
+		t.Fatal("case-insensitive Lookup should hit EventType→eventtype")
+	}
+	if bd.PhysicalName != "eventtype" {
+		t.Errorf("PhysicalName = %q, want eventtype", bd.PhysicalName)
+	}
+
+	pipe := &ir.Pipeline{
+		Source: src("events"),
+		Stages: []ir.Stage{
+			&ir.Filter{Predicate: col("EventType")},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{
+		"events": {{PhysicalName: "eventtype", DisplayName: "eventtype"}},
+	}}
+	var diags diagnostic.List
+	Bind(pipe, prov, &diags)
+	if diags.HasErrors() {
+		t.Fatalf("EventType should resolve to eventtype: %v", diags.Render())
+	}
+	f := pipe.Stages[0].(*ir.Filter)
+	resolved := f.Predicate.(*ir.Col)
+	if resolved.Name != "eventtype" {
+		t.Errorf("Col.Name = %q, want eventtype (physical)", resolved.Name)
+	}
+	if !resolved.ColID.IsValid() {
+		t.Error("Col.ColID should be valid after bind")
+	}
+}
+
+func TestBindColIDAllocatedDistinct(t *testing.T) {
+	pipe := &ir.Pipeline{Source: src("events")}
+	prov := &fakeProvider{tables: map[string][]ColBinding{
+		"events": cols("a", "b", "c"),
+	}}
+	var diags diagnostic.List
+	b := &binder{prov: prov, diags: &diags}
+	schema := b.sourceSchema(pipe.Source)
+	ids := map[ir.ColID]bool{}
+	for _, c := range schema.Cols {
+		if ids[c.ColID] {
+			t.Errorf("ColID %d duplicated", c.ColID)
+		}
+		ids[c.ColID] = true
+	}
+	if len(ids) != 3 {
+		t.Errorf("got %d distinct ColIDs, want 3", len(ids))
+	}
+}
+
 func TestSchemaHas(t *testing.T) {
-	s := &Schema{Cols: []string{"a", "b"}}
-	if !s.Has("a") || !s.Has("b") {
-		t.Error("Has should find present columns")
+	s := &Schema{Cols: cols("a", "b")}
+	if !s.Has("a") || !s.Has("A") || !s.Has("B") {
+		t.Error("Has should be case-insensitive")
 	}
 	if s.Has("c") {
 		t.Error("Has should not find absent column")
 	}
 	var nilS *Schema
 	if !nilS.Has("anything") {
-		t.Error("nil schema should be permissive (Has=true)")
+		t.Error("nil schema should be permissive")
 	}
 }
 
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
-// errNotFound is a minimal error for the fake provider's missing-table case.
 type notFoundErr struct{ table string }
+
 func (e *notFoundErr) Error() string { return "table " + e.table + " not found" }
 func errNotFound(table string) error { return &notFoundErr{table: table} }

@@ -148,13 +148,13 @@ func TestPg_StringOp(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set KQL_PG_DSN")
 	}
-	// NOTE: pg lowercased the EventType column to "eventtype" at create time
-	// (unquoted DDL). KQL identifiers are case-sensitive, so we reference the
-	// actual stored name. This case-folding difference is exactly what ColID
-	// binding (DESIGN §5) is meant to abstract — tracked in backend/NOTES.md.
-	res := pgRun(t, dsn, `events | where eventtype has "ail"`)
+	// Case-folding acceptance: the column is stored as `eventtype` (pg lowercased
+	// the unquoted DDL), but the KQL query uses the CamelCase `EventType`. With
+	// ColID binding (case-insensitive resolution + physical-name rewrite), this
+	// now resolves correctly. This is the test that B2-minimal couldn't pass.
+	res := pgRun(t, dsn, `events | where EventType has "ail"`)
 	if len(res.Rows()) != 2 {
-		t.Errorf("rows = %d, want 2 (Hail, case-insensitive via ILIKE)", len(res.Rows()))
+		t.Errorf("rows = %d, want 2 (Hail via ILIKE, case-folded EventType)", len(res.Rows()))
 	}
 }
 

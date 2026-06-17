@@ -315,3 +315,32 @@ group key 用原列名做别名（`state AS state`）；只有计算表达式且
 - **nil provider 放行**：无法 introspect schema 的 source（如动态生成的表），binder 不报未知列，只透传。保证不过度拒错。
 
 **测试覆盖**（`binder_test.go`）：已知列/未知列/缺表/nil放行/project-去列/extend-加列/summarize-输出去未聚合列/schema.Has。
+
+## 10. ColID 物理列绑定（DESIGN §5 落地）
+
+**核心修复**：pg 大小写折叠（`EventType` 在 pg 存为 `eventtype`）—— 之前 `EventType` 引用
+在 pg 上要么 binder 报未知列、要么运行时 404。现在 **ColID 绑定根治**：
+
+**机制**：
+- `Schema` 升级为 `[]ColBinding{ColID, PhysicalName, DisplayName}`（替代 `[]string`）。
+- `Lookup(name)` **大小写不敏感**（`strings.EqualFold`）：`EventType` 匹配 `eventtype`。
+- binder 走 pipeline 时给每列分配递增 ColID（`next` 计数器，1-based，0=Invalid）。
+- `checkExpr` 命中后**写回 `*ir.Col`**：`n.ColID = binding.ColID; n.Name = binding.PhysicalName`
+  （把 KQL 源写法 `EventType` 改写成物理名 `eventtype`）。
+- emit 的 `case *ir.Col:` **逻辑不变**（仍是 `alias.quoteIdent(n.Name)`）—— 但 `n.Name` 现在
+  保证是物理名，所以 pg 输出 `eventtype`、sqlite 输出 `EventType`，**每后端自动正确**。
+
+**验收**：`TestPg_StringOp` 用原 KQL 写法 `EventType` 通过（pg 上 ILIKE 出 2 行 Hail）。
+`TestLookupCaseInsensitive` 单测覆盖解析+回写+ColID 有效性。
+
+**SchemaProvider 两端不改**：sqlite PRAGMA 返回原大小写、pg information_schema 返回小写——
+这正是物理名的来源，binder 透传。
+
+**ColID 继承语义**（projectBinding/namedBinding）：
+- 命名投影 `s = state` → 新 ColID（新列）。
+- 裸列投影 `project state` → **继承源 ColID**（同一列，只是换 schema 位置）。
+- extend 新列 → 新 ColID。
+- summarize keys/aggs → named 用新 ColID，裸 col key 继承源。
+
+**不在范围**（下一轮）：join `$left.X`/`$right.X` 限定引用（需 IR Member 扩展）、
+类型推断（Col.T 仍 Unknown）、PhysicalPlan 集成。
