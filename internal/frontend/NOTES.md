@@ -279,6 +279,22 @@ parse 的 regex 抽取）留到各后端线 + NeedsPostProc 标记时实现。
 
 **语料 100%（89/89）达成。**
 
+**6.1 语法对齐补齐（`set` / `as` / `invoke`，语料 89→90）**：根据 ALIGNMENT-ANALYSIS.md
+的高频缺口，补齐了三个生产 KQL 常见但此前缺失的构造：
+- ✅ **`set` 语句**（g4 setStatement）：`set querytrace;` / `set result_truncation_size=30000000;`
+  —— 语句级查询元数据，不产生行。新增 `SetStmt` AST 节点；translator 跳过它。
+- ✅ **`| as Name` 算子**（g4 asOperator）：给中间结果集绑定名字（行级 no-op，名字是元数据）。
+  新增 `AsOp` AST 节点；translate 成 passthrough Project{\*}。
+- ✅ **`| invoke F(args)` 算子**（g4 invokeOperator）：调用存储函数/插件。新增 `InvokeOp` AST
+  节点；translate 成 passthrough（真实语义需函数注册表 + PostProc）。
+
+**6.2 `kind` 参数名误识别修复（深层 bug）**：`tryParamName` 把 `kind` 等无条件当作算子参数名，
+导致 `where kind == "x"` 里的列 `kind` 被误吞。修复：只在紧跟 `=` 时才认作参数名（1-token
+lookahead）。被新 e2e 测试暴露的预存在 bug。
+
+**6.3 binder Star 展开修复**：`Project{Star}`（passthrough 形式）此前在 binder 里丢失所有输入列。
+修复：`Project` 的 binder 分支检测 `*ir.Star` 时把全部输入列原样前传。
+
 ## 7. builtin 函数表（F7）
 
 **结构**：`internal/frontend/builtin/builtin.go` —— `Spec{Name, MinArgs, MaxArgs,

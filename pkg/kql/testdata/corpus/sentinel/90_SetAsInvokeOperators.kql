@@ -1,0 +1,13 @@
+// Exercises three grammar gaps recently wired (set / as / invoke):
+//  - `set` sets a query-level option before the query (querytrace here).
+//  - `| as Result` binds a name to the intermediate rowset (a row-wise no-op
+//    at emit; the name is metadata for later reference / invoke).
+//  - `| invoke MyPlugin()` calls a stored function on the rowset (parsed +
+//    translated as a pass-through; real semantics need a function registry).
+set querytrace;
+SecurityEvent
+| where EventID == 4624
+| summarize LogonCount = count() by Account
+| as AdminLogons
+| invoke DetectAnomaly(LogonCount)
+| take 10

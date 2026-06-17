@@ -81,6 +81,32 @@ func (s *ExprStmt) Pos() token.Pos { return s.Expr.Pos() }
 // End returns one past the expression's end.
 func (s *ExprStmt) End() token.Pos { return s.Expr.End() }
 
+// SetStmt is `set Name [= Value];` (g4 setStatement). It sets a query-level
+// option before the query runs (`set querytrace;`, `set result_truncation_size=30000000;`).
+// It does NOT produce rows; it is metadata for the engine. The IR translator
+// skips it (a no-op), so it never reaches SQL emit. Value is optional and may
+// be an identifier or a literal per setStatementOptionValue.
+type SetStmt struct {
+	Set   token.Pos // position of "set"
+	Name  *Ident    // option name
+	Assign token.Pos // position of "=" (NoPos if absent)
+	Value Expr      // optional value (Ident or BasicLit)
+}
+
+// Pos returns the position of "set".
+func (s *SetStmt) Pos() token.Pos { return s.Set }
+
+// End returns one past the value, or the name when there is no value.
+func (s *SetStmt) End() token.Pos {
+	if s.Value != nil {
+		return s.Value.End()
+	}
+	if s.Name != nil {
+		return s.Name.End()
+	}
+	return token.Pos(int(s.Set) + len("set"))
+}
+
 // Script is the root of a KQL script: a sequence of statements separated by
 // ';', matching the authoritative grammar's `query: statement (';' statement)*`.
 type Script struct {
@@ -107,3 +133,6 @@ func (*LetStmt) node()   {}
 func (*LetStmt) stmt()   {}
 func (*ExprStmt) node()  {}
 func (*ExprStmt) stmt()  {}
+
+func (*SetStmt) node() {}
+func (*SetStmt) stmt() {}

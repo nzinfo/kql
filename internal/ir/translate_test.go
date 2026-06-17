@@ -231,3 +231,55 @@ func TestTranslateUnsupportedOperator(t *testing.T) {
 func typeName(v interface{}) string {
 	return reflect.TypeOf(v).String()
 }
+
+// TestTranslateAsOp: `| as Name` is a row-wise no-op (pass-through Project with
+// a single Star). The name is metadata; it does not appear in the IR.
+func TestTranslateAsOp(t *testing.T) {
+	pipe := translateSrc(t, `T | as Result`)
+	if len(pipe.Stages) != 1 {
+		t.Fatalf("Stages = %d, want 1 (pass-through)", len(pipe.Stages))
+	}
+	pr, ok := pipe.Stages[0].(*Project)
+	if !ok {
+		t.Fatalf("stage0 = %T, want *Project (pass-through)", pipe.Stages[0])
+	}
+	if len(pr.Cols) != 1 {
+		t.Fatalf("Project.Cols = %d, want 1", len(pr.Cols))
+	}
+	if _, ok := pr.Cols[0].Expr.(*Star); !ok {
+		t.Errorf("Project.Cols[0].Expr = %T, want *Star", pr.Cols[0].Expr)
+	}
+}
+
+// TestTranslateInvokeOp: `| invoke F(...)` is a pass-through Project (real
+// semantics need a function registry + PostProc).
+func TestTranslateInvokeOp(t *testing.T) {
+	pipe := translateSrc(t, `T | invoke MyPlugin(x)`)
+	if len(pipe.Stages) != 1 {
+		t.Fatalf("Stages = %d, want 1 (pass-through)", len(pipe.Stages))
+	}
+	if _, ok := pipe.Stages[0].(*Project); !ok {
+		t.Fatalf("stage0 = %T, want *Project (pass-through)", pipe.Stages[0])
+	}
+}
+
+// TestTranslateSetSkipped: a `set X;` statement produces no pipeline (it's
+// metadata); the translator's Translate(Script) walks past it to the query.
+func TestTranslateSetSkipped(t *testing.T) {
+	p := parser.New("test.kql", "set querytrace;\nT | take 5")
+	script := p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Fatalf("parse errors: %v", diags.Render())
+	}
+	var diags diagnostic.List
+	pipe := Translate(script, &diags)
+	if diags.HasErrors() {
+		t.Fatalf("translate errors: %v", diags.Render())
+	}
+	if pipe == nil {
+		t.Fatal("Translate returned nil; expected the query pipeline (SetStmt skipped)")
+	}
+	if len(pipe.Stages) != 1 {
+		t.Errorf("Stages = %d, want 1 (take 5)", len(pipe.Stages))
+	}
+}

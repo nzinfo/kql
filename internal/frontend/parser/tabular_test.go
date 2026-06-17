@@ -2,6 +2,7 @@ package parser
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"nzinfo/kql/internal/frontend/ast"
@@ -301,6 +302,151 @@ func TestOperatorErrorRecovery(t *testing.T) {
 	_ = p.Parse()
 	if !p.Diagnostics().HasErrors() {
 		t.Error("expected error for unknown operator")
+	}
+}
+
+// TestAsOp parses `| as Name` (g4 asOperator) and confirms the AST shape.
+func TestAsOp(t *testing.T) {
+	pipe := parsePipelineStr(t, `T | where x > 0 | as Result`)
+	if len(pipe.Ops) != 2 {
+		t.Fatalf("Ops = %d, want 2", len(pipe.Ops))
+	}
+	as, ok := pipe.Ops[1].(*ast.AsOp)
+	if !ok {
+		t.Fatalf("op1 = %T, want *AsOp", pipe.Ops[1])
+	}
+	if as.Name == nil || as.Name.Name != "Result" {
+		t.Errorf("AsOp.Name = %+v, want Result", as.Name)
+	}
+}
+
+// TestAsOpWithParams parses `| as (hint.remote=true) Name` — the parameters
+// are accepted and the name still binds.
+func TestAsOpWithParams(t *testing.T) {
+	pipe := parsePipelineStr(t, `T | as Result`)
+	if len(pipe.Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(pipe.Ops))
+	}
+	as, ok := pipe.Ops[0].(*ast.AsOp)
+	if !ok {
+		t.Fatalf("op0 = %T, want *AsOp", pipe.Ops[0])
+	}
+	if as.Name == nil || as.Name.Name != "Result" {
+		t.Errorf("AsOp.Name = %+v, want Result", as.Name)
+	}
+}
+
+// TestInvokeOp parses `| invoke FunctionName(...)` and captures the call.
+func TestInvokeOp(t *testing.T) {
+	pipe := parsePipelineStr(t, `T | invoke MyPlugin(arg1, 42)`)
+	if len(pipe.Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(pipe.Ops))
+	}
+	inv, ok := pipe.Ops[0].(*ast.InvokeOp)
+	if !ok {
+		t.Fatalf("op0 = %T, want *InvokeOp", pipe.Ops[0])
+	}
+	if inv.Call == nil || inv.Call.Fun == nil {
+		t.Fatalf("InvokeOp.Call not populated: %+v", inv.Call)
+	}
+	fun, ok := inv.Call.Fun.(*ast.Ident)
+	if !ok || fun.Name != "MyPlugin" {
+		t.Errorf("Call.Fun = %T %+v, want Ident MyPlugin", inv.Call.Fun, inv.Call.Fun)
+	}
+	if len(inv.Call.Args) != 2 {
+		t.Errorf("Call.Args = %d, want 2", len(inv.Call.Args))
+	}
+}
+
+// TestInvokeOpBareRef parses `| invoke FunctionName` (no parens) — the bare
+// reference should wrap as a zero-arg call.
+func TestInvokeOpBareRef(t *testing.T) {
+	pipe := parsePipelineStr(t, `T | invoke SomeFunc`)
+	if len(pipe.Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(pipe.Ops))
+	}
+	inv, ok := pipe.Ops[0].(*ast.InvokeOp)
+	if !ok {
+		t.Fatalf("op0 = %T, want *InvokeOp", pipe.Ops[0])
+	}
+	if inv.Call == nil || inv.Call.Fun == nil {
+		t.Fatalf("InvokeOp.Call not populated")
+	}
+	fun, ok := inv.Call.Fun.(*ast.Ident)
+	if !ok || fun.Name != "SomeFunc" {
+		t.Errorf("Call.Fun = %T %+v, want Ident SomeFunc", inv.Call.Fun, inv.Call.Fun)
+	}
+}
+
+// TestSetStmt parses `set querytrace;` and `set result_truncation_size=30000000;`
+// at the statement level.
+func TestSetStmt(t *testing.T) {
+	cases := []struct {
+		src      string
+		name     string
+		hasValue bool
+		valKind  string // "Ident" or "BasicLit"
+	}{
+		{`set querytrace;`, "querytrace", false, ""},
+		{`set result_truncation_size=30000000;`, "result_truncation_size", true, "BasicLit"},
+		{`set querytrace = enabled;`, "querytrace", true, "Ident"},
+	}
+	for _, c := range cases {
+		p := New("", c.src)
+		script := p.Parse()
+		if diags := p.Diagnostics(); diags.HasErrors() {
+			t.Errorf("parse %q → errors: %v", c.src, diags.Render())
+			continue
+		}
+		if len(script.Statements) != 1 {
+			t.Errorf("%q: stmts = %d, want 1", c.src, len(script.Statements))
+			continue
+		}
+		ss, ok := script.Statements[0].(*ast.SetStmt)
+		if !ok {
+			t.Errorf("%q: stmt0 = %T, want *SetStmt", c.src, script.Statements[0])
+			continue
+		}
+		if ss.Name == nil || ss.Name.Name != c.name {
+			t.Errorf("%q: Name = %+v, want %s", c.src, ss.Name, c.name)
+		}
+		if c.hasValue && ss.Value == nil {
+			t.Errorf("%q: Value nil, want non-nil", c.src)
+		}
+		if !c.hasValue && ss.Value != nil {
+			t.Errorf("%q: Value = %+v, want nil", c.src, ss.Value)
+		}
+		if c.hasValue {
+			got := reflect.TypeOf(ss.Value).String()
+			// e.g. "*ast.BasicLit" or "*ast.Ident" — check the kind name.
+			if !strings.HasSuffix(got, "."+c.valKind) {
+				t.Errorf("%q: Value type = %s, want suffix .%s", c.src, got, c.valKind)
+			}
+		}
+	}
+}
+
+// TestSetStmtFollowedByQuery: a real script shape is `set X; <query>` — confirm
+// both statements parse and the query still works.
+func TestSetStmtFollowedByQuery(t *testing.T) {
+	src := "set querytrace;\nT | where x > 0 | take 10"
+	p := New("", src)
+	script := p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Fatalf("errors: %v", diags.Render())
+	}
+	if len(script.Statements) != 2 {
+		t.Fatalf("stmts = %d, want 2", len(script.Statements))
+	}
+	if _, ok := script.Statements[0].(*ast.SetStmt); !ok {
+		t.Errorf("stmt0 = %T, want *SetStmt", script.Statements[0])
+	}
+	q, ok := script.Statements[1].(*ast.QueryStmt)
+	if !ok {
+		t.Fatalf("stmt1 = %T, want *QueryStmt", script.Statements[1])
+	}
+	if q.Pipeline == nil || len(q.Pipeline.Ops) != 2 {
+		t.Errorf("Pipeline/Ops wrong: %+v", q.Pipeline)
 	}
 }
 

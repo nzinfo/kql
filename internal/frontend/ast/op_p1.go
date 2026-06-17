@@ -198,6 +198,56 @@ func (*SerializeOp) operator() {}
 func (*ExternalDataOp) node() {}
 func (*ExternalDataOp) operator() {}
 
+// AsOp is `| as Name` (g4 asOperator). It binds a name to the current result so
+// the pipeline can be referenced later (e.g. as a sub-expression, or for
+// `invoke`). It carries optional operator parameters (`| as (hint.remote=true)
+// Name`) per the grammar; those are ignored at emit. Semantically it is a
+// no-op over rows — the name lives in the query's symbol table, not the SQL.
+type AsOp struct {
+	Pipe   token.Pos
+	As     token.Pos
+	Params []*OperatorParam // optional ( ... ) before the name
+	Name   *Ident
+}
+
+// Pos returns the position of |.
+func (x *AsOp) Pos() token.Pos { return x.Pipe }
+
+// End returns one past the name.
+func (x *AsOp) End() token.Pos {
+	if x.Name != nil {
+		return x.Name.End()
+	}
+	return token.Pos(int(x.As) + len("as"))
+}
+
+// InvokeOp is `| invoke FunctionName(args...)` (g4 invokeOperator). It calls a
+// stored function / plugin on the current rowset. For the minimal loop we parse
+// the call and treat it as a pass-through at emit (real semantics need a
+// function registry; flagged via the translator's NeedsPostProc path).
+type InvokeOp struct {
+	Pipe token.Pos
+	Invoke token.Pos
+	Call *CallExpr // the dotCompositeFunctionCallExpression, captured as a call
+}
+
+// Pos returns the position of |.
+func (x *InvokeOp) Pos() token.Pos { return x.Pipe }
+
+// End returns one past the call expression.
+func (x *InvokeOp) End() token.Pos {
+	if x.Call != nil {
+		return x.Call.End()
+	}
+	return token.Pos(int(x.Invoke) + len("invoke"))
+}
+
 // DatatableLit is an Expr (a source usable in expression position).
 func (*DatatableLit) node() {}
 func (*DatatableLit) expr() {}
+
+// AsOp / InvokeOp node markers.
+func (*AsOp) node()     {}
+func (*AsOp) operator() {}
+func (*InvokeOp) node() {}
+func (*InvokeOp) operator() {}

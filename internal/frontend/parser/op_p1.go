@@ -313,6 +313,56 @@ func (p *Parser) parseEvaluateOp(pipePos token.Pos) *ast.RenderOp {
 	return out
 }
 
+// parseAsOp: `| as [Name(=value) ...] Name` (g4 asOperator). Binds a name to the
+// current result; the parameters (hints) are optional and ignored at emit. The
+// name is an identifier or an escaped/keyword name. This is a row-wise no-op —
+// the translator emits a pass-through and records the name for downstream
+// symbol-table use.
+func (p *Parser) parseAsOp(pipePos token.Pos) *ast.AsOp {
+	opPos := p.pos
+	p.next() // consume 'as'
+	out := &ast.AsOp{Pipe: pipePos, As: opPos}
+	// Optional parameters: `( hint.remote = true )` before the name (rare).
+	out.Params = p.parseOperatorParams()
+	// Name (required by the grammar, but be lenient: if missing, leave nil and
+	// let the diagnostic surface).
+	if p.cur == token.IDENT || p.cur.IsKeyword() {
+		out.Name = p.parseIdentLike()
+	} else {
+		p.error(p.pos, "expected name after 'as'")
+	}
+	return out
+}
+
+// parseInvokeOp: `| invoke FunctionName(args...)` (g4 invokeOperator). The
+// function reference is a dotCompositeFunctionCallExpression — for the minimal
+// loop we capture it as a *CallExpr via ParseExpr (which handles `a.b.c(x)` and
+// `Name(args)`).
+func (p *Parser) parseInvokeOp(pipePos token.Pos) *ast.InvokeOp {
+	opPos := p.pos
+	p.next() // consume 'invoke'
+	out := &ast.InvokeOp{Pipe: pipePos, Invoke: opPos}
+	// The function call: an expression beginning with IDENT (possibly dotted).
+	if p.cur == token.IDENT || p.cur.IsKeyword() {
+		expr := p.ParseExpr()
+		if call, ok := expr.(*ast.CallExpr); ok {
+			out.Call = call
+		} else {
+			// Wrap a bare function reference as a zero-arg call so IR/emit has a
+			// uniform shape.
+			if id, ok := expr.(*ast.Ident); ok {
+				out.Call = &ast.CallExpr{Fun: id}
+			} else {
+				// Best-effort: stash as a Fun=Ident with the source text.
+				out.Call = &ast.CallExpr{}
+			}
+		}
+	} else {
+		p.error(p.pos, "expected function name after 'invoke'")
+	}
+	return out
+}
+
 // parsePassthroughOp is a catch-all for P2 operators we parse only to keep
 // real queries flowing (top-nested/partition/fork/lookup/facet/sample/...).
 // It records the operator keyword (for explain) and consumes tokens to the

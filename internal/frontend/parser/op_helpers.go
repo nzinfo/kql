@@ -48,11 +48,22 @@ func (p *Parser) parseOperatorParams() []*ast.OperatorParam {
 // for the operator body to handle (binder can flag them later). Crucially we
 // do NOT probe generic IDENT here — that would mis-grab named bindings like
 // `summarize c = count()` where `c` is an aggregate name, not a param.
+//
+// IMPORTANT: a param name must be IMMEDIATELY followed by `=`. Without this
+// guard, `where kind == "x"` mis-parses `kind` as a param (KQL columns are
+// frequently named `kind`). We do a 1-token lookahead via save/restore.
 func (p *Parser) tryParamName() *ast.Ident {
 	switch p.cur {
 	case token.KIND, token.WITHSOURCE, token.DATASCOPE:
-		pos, lit := p.pos, p.lit
-		tok := p.cur
+		// Lookahead: only treat as a param name if the next token is `=`.
+		s := p.save()
+		pos, lit, tok := p.pos, p.lit, p.cur
+		p.next()
+		isParam := p.cur == token.ASSIGN
+		p.restore(s)
+		if !isParam {
+			return nil
+		}
 		return &ast.Ident{NamePos: pos, Name: lit, Tok: tok}
 	}
 	return nil

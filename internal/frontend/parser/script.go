@@ -31,14 +31,36 @@ func (p *Parser) Parse() *ast.Script {
 	return script
 }
 
-// parseStatement parses one top-level statement: a let-binding or a query
-// (tabular pipeline). The query form produces a QueryStmt wrapping a Pipeline.
+// parseStatement parses one top-level statement: a let-binding, a set-option,
+// or a query (tabular pipeline). The query form produces a QueryStmt wrapping
+// a Pipeline. `set` is query metadata and does not produce rows.
 func (p *Parser) parseStatement() ast.Stmt {
-	if p.cur == token.LET {
+	switch p.cur {
+	case token.LET:
 		return p.parseLetStmt()
+	case token.SET:
+		return p.parseSetStmt()
 	}
 	pipe := p.parsePipeline()
 	return &ast.QueryStmt{Pipeline: pipe}
+}
+
+// parseSetStmt parses `set Name [= Value]` (g4 setStatement). Value is optional
+// and, when present, is an identifier or a literal (setStatementOptionValue).
+// The statement is query metadata and does not produce rows; the translator
+// skips it entirely (no IR stage, no SQL).
+func (p *Parser) parseSetStmt() *ast.SetStmt {
+	setPos := p.expect(token.SET)
+	name := p.parseIdentLike()
+	out := &ast.SetStmt{Set: setPos, Name: name}
+	if p.cur == token.ASSIGN {
+		out.Assign = p.pos
+		p.next() // consume '='
+		// Value: identifier or literal (setStatementOptionValue). parsePrimary
+		// handles both forms uniformly; we accept any primary to be lenient.
+		out.Value = p.parsePrimary()
+	}
+	return out
 }
 
 // parseLetStmt parses `let Name = Expr ;` or `let Name = (params) { body }` (a

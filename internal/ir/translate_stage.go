@@ -79,6 +79,15 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		// External source — best-effort pass-through (real impl needs the
 		// storage connector; flagged NeedsPostProc).
 		return t.translatePassthrough(n.Pos())
+	case *ast.AsOp:
+		// `| as Name` binds a name to the current result; rows are unchanged.
+		// The name lives in the query's symbol table (for later `invoke` /
+		// re-reference), not in the SQL — so this is a row-wise no-op.
+		return t.translatePassthrough(n.Pos())
+	case *ast.InvokeOp:
+		// `| invoke F(...)` calls a stored function/plugin. Real semantics need
+		// a function registry + PostProc; emit pass-through for now.
+		return t.translatePassthrough(n.Pos())
 	case *ast.MvExpandOp:
 		// mv-expand: explode array column → multiple rows. No direct SQL in the
 		// minimal path (sqlite has no UNNEST; pg/duckdb do). Emit as a

@@ -21,6 +21,8 @@ func (v *BaseVisitor) Visit(node Node) (w Visitor) {
 		v.VisitLetStmt(n)
 	case *ExprStmt:
 		v.VisitExprStmt(n)
+	case *SetStmt:
+		v.VisitSetStmt(n)
 	case *Pipeline:
 		v.VisitPipeline(n)
 	case *BasicLit:
@@ -75,6 +77,10 @@ func (v *BaseVisitor) Visit(node Node) (w Visitor) {
 		v.VisitCountOp(n)
 	case *TopOp:
 		v.VisitTopOp(n)
+	case *AsOp:
+		v.VisitAsOp(n)
+	case *InvokeOp:
+		v.VisitInvokeOp(n)
 	case *Bad:
 		v.VisitBad(n)
 	case *BadExpr:
@@ -97,6 +103,9 @@ func (v *BaseVisitor) VisitLetStmt(*LetStmt) {}
 
 // VisitExprStmt visits an ExprStmt.
 func (v *BaseVisitor) VisitExprStmt(*ExprStmt) {}
+
+// VisitSetStmt visits a SetStmt.
+func (v *BaseVisitor) VisitSetStmt(*SetStmt) {}
 
 // VisitPipeline visits a Pipeline.
 func (v *BaseVisitor) VisitPipeline(*Pipeline) {}
@@ -178,6 +187,12 @@ func (v *BaseVisitor) VisitCountOp(*CountOp) {}
 
 // VisitTopOp visits a TopOp.
 func (v *BaseVisitor) VisitTopOp(*TopOp) {}
+
+// VisitAsOp visits an AsOp.
+func (v *BaseVisitor) VisitAsOp(*AsOp) {}
+
+// VisitInvokeOp visits an InvokeOp.
+func (v *BaseVisitor) VisitInvokeOp(*InvokeOp) {}
 
 // VisitBad visits a Bad node.
 func (v *BaseVisitor) VisitBad(*Bad) {}

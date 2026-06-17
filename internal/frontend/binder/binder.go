@@ -158,6 +158,15 @@ func (b *binder) bindStage(st ir.Stage, in *Schema) *Schema {
 		out := &Schema{}
 		for _, c := range s.Cols {
 			b.checkExpr(c.Expr, in)
+			// `project *` (and the pass-through form emitted by render/as/
+			// invoke/getschema/externaldata/mv-expand/...) carries ALL input
+			// columns forward unchanged.
+			if _, ok := c.Expr.(*ir.Star); ok {
+				if in != nil {
+					out.Cols = append(out.Cols, in.Cols...)
+				}
+				continue
+			}
 			// Output column: named binding gets a new ColID; a bare Col
 			// reference inherits the source binding's ColID.
 			out.Cols = append(out.Cols, b.projectBinding(c, in))

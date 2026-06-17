@@ -81,6 +81,10 @@ func (p *Parser) parsePipedOperator() ast.Operator {
 		return p.parseExternalDataOp(pipePos)
 	case token.EVALUATE:
 		return p.parseEvaluateOp(pipePos)
+	case token.AS:
+		return p.parseAsOp(pipePos)
+	case token.INVOKE:
+		return p.parseInvokeOp(pipePos)
 	// P2 operators — parsed as passthroughs (semantics deferred; see NOTES.md §6).
 	// These produce real AST nodes only where worth it; the rest collapse to a
 	// generic pass-through that consumes tokens to the next stage boundary.

@@ -37,6 +37,7 @@ var (
 	_ Stmt = (*QueryStmt)(nil)
 	_ Stmt = (*LetStmt)(nil)
 	_ Stmt = (*ExprStmt)(nil)
+	_ Stmt = (*SetStmt)(nil)
 
 	_ Operator = (*WhereOp)(nil)
 	_ Operator = (*ProjectOp)(nil)
@@ -49,6 +50,8 @@ var (
 	_ Operator = (*DistinctOp)(nil)
 	_ Operator = (*CountOp)(nil)
 	_ Operator = (*TopOp)(nil)
+	_ Operator = (*AsOp)(nil)
+	_ Operator = (*InvokeOp)(nil)
 )
 
 // --- Position tests (F2 acceptance: nodes carry correct Pos/End) ---
@@ -225,12 +228,13 @@ func TestWalkCoverage(t *testing.T) {
 func TestBaseVisitorNoPanics(t *testing.T) {
 	bv := &BaseVisitor{}
 	nodes := []Node{
-		&Script{}, &QueryStmt{Pipeline: &Pipeline{}}, &LetStmt{}, &ExprStmt{},
+		&Script{}, &QueryStmt{Pipeline: &Pipeline{}}, &LetStmt{}, &ExprStmt{}, &SetStmt{},
 		&Pipeline{}, &BasicLit{}, &DynamicLit{}, &Ident{}, &StarExpr{}, &NamedExpr{},
 		&BinaryExpr{}, &UnaryExpr{}, &ParenExpr{}, &CallExpr{}, &SelectorExpr{},
 		&IndexExpr{}, &ListExpr{}, &BetweenExpr{}, &ConditionalExpr{}, &CastExpr{},
 		&WhereOp{}, &ProjectOp{}, &ExtendOp{}, &TakeOp{}, &SortOp{}, &SummarizeOp{},
-		&JoinOp{}, &UnionOp{}, &DistinctOp{}, &CountOp{}, &TopOp{}, &Bad{}, &BadExpr{},
+		&JoinOp{}, &UnionOp{}, &DistinctOp{}, &CountOp{}, &TopOp{},
+		&AsOp{}, &InvokeOp{}, &Bad{}, &BadExpr{},
 	}
 	for _, n := range nodes {
 		Walk(bv, n) // must not panic

@@ -165,13 +165,15 @@ func TestCorpusP0Subset(t *testing.T) {
 	// false "P0 bugs". Grows as P1/P2 lands.)
 	p1plus := []string{
 		"parse ", "parse-where", "parse-kv", "mv-expand", "mv-apply",
-		"make-series", "externaldata", "graph-", "invoke ", "evaluate ",
+		"make-series", "externaldata", "graph-", "evaluate ",
 		"scan ", "fork ", "declare ", "datatable(", "datatable (",
-		"render ", "| as ", "macro-expand", "facet ", "top-nested",
+		"render ", "macro-expand", "facet ", "top-nested",
 		"sample-distinct", "top-hitters", "reduce ",
 		// operators that are standalone stages with no P0 handling
 		"| consume", "| getschema", "| serialize", "| partition ",
 		"| lookup ", "| bagunpack", "| narrow",
+		// NOTE: `| as` and `| invoke` are now parsed + translated + emitted
+		// (pass-through), so they're no longer excluded here.
 	}
 	// function-form let (let f(x)=...) and multi-statement pipelines with
 	// complex let bodies are P1; flag them loosely by "let " + "(" + "=" pattern.
