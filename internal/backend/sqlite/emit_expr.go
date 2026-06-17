@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"nzinfo/kql/internal/frontend/builtin"
 	"nzinfo/kql/internal/frontend/token"
 	"nzinfo/kql/internal/ir"
 )
@@ -227,8 +228,12 @@ func sqlStringOp(op token.Token, x, y string) (string, bool) {
 	return "", false
 }
 
-// emitFuncCall emits a function call. Aggregate functions map to SQL aggregates;
-// common scalar fns map 1:1; unknown fns fall through to a best-effort pass.
+// emitFuncCall emits a function call. It consults the builtin catalog
+// (internal/frontend/builtin) for a per-function SQLite translation; the catalog
+// covers the common KQL scalar/aggregate functions so emit produces VALID SQLite
+// (ago → datetime('now', -...), tostring → CAST AS TEXT, iff → CASE, etc.)
+// instead of a blind UPPER(name) pass-through. Functions not in the catalog or
+// marked NeedsPostProc fall back to a best-effort pass-through.
 func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 	args := make([]string, 0, len(n.Args))
 	for _, a := range n.Args {
@@ -238,32 +243,93 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		}
 		args = append(args, s)
 	}
-	// count() → COUNT(*); count(*) maps naturally too.
+	// count() is special (no args → COUNT(*)).
 	if strings.EqualFold(n.Name, "count") {
 		if len(args) == 0 {
 			return "COUNT(*)", nil
 		}
 		return fmt.Sprintf("COUNT(%s)", args[0]), nil
 	}
-	// bin(col, span): SQLite has no native bin; emulate with strftime for
-	// datetime columns. Minimal loop: emit a best-effort bucket via
-	// (col / span) * span for numeric, leaving datetime binning as a known
-	// approximation (T-series will refine with real data).
+	// bin(col, span): no native bin in sqlite; numeric bucket approximation
+	// (datetime binning deferred — see NOTES).
 	if strings.EqualFold(n.Name, "bin") && len(args) == 2 {
 		return fmt.Sprintf("(CAST((%s) / (%s) AS INTEGER) * (%s))", args[0], args[1], args[1]), nil
 	}
-	// iff(cond, a, b) → CASE.
-	if strings.EqualFold(n.Name, "iff") && len(args) == 3 {
-		return fmt.Sprintf("CASE WHEN %s THEN %s ELSE %s END", args[0], args[1], args[2]), nil
+	// Consult the builtin catalog for a SQLite translation.
+	if spec := builtin.Lookup(n.Name); spec != nil {
+		if spec.SQLite == builtin.StrcatTpl {
+			// variadic strcat → "a || b || c ..."
+			return "(" + strings.Join(args, " || ") + ")", nil
+		}
+		if spec.SQLite == "coalesce(%s)" {
+			// variadic coalesce
+			return fmt.Sprintf("coalesce(%s)", strings.Join(args, ", ")), nil
+		}
+		if spec.SQLite != "" {
+			return applySQLiteTemplate(spec.SQLite, args), nil
+		}
+		// No SQL translation (NeedsPostProc or simply unmapped): best-effort
+		// pass-through so the query at least parses/executes, and record the
+		// capability gap for the post-proc layer.
+		if spec.NeedsPostProc {
+			e.notePostProc(n.Name)
+		}
 	}
-	// cast-style to_<type>
+	// cast-style to_<type> (not in the catalog as a single template since KQL
+	// spellings vary; kept here for completeness).
 	if strings.HasPrefix(n.Name, "to_") && len(args) == 1 {
 		t := strings.TrimPrefix(n.Name, "to_")
 		return castToSQL(t, args[0])
 	}
-	// Generic pass-through: NAME(arg1, arg2, ...). Most SQL fns (abs, length,
-	// substr, coalesce, now, sum, avg, min, max, …) match by name.
+	// Generic pass-through: NAME(arg1, arg2, ...). For functions the catalog
+	// doesn't know, this at least keeps the query runnable on functions that
+	// happen to share SQLite's name (abs, length, substr, …).
 	return fmt.Sprintf("%s(%s)", strings.ToUpper(n.Name), strings.Join(args, ", ")), nil
+}
+
+// applySQLiteTemplate substitutes the emitted arg SQL into a catalog template.
+// The template uses %s per argument, in order. Args beyond the template's %s
+// count are appended as extra comma-separated arguments (a pragmatic fix for
+// functions whose SQLite form takes the same args plus modifiers).
+func applySQLiteTemplate(tpl string, args []string) string {
+	// Count %s placeholders.
+	n := strings.Count(tpl, "%s")
+	// fmt with the first n args; append the rest verbatim.
+	fill := args
+	if len(fill) > n {
+		fill = fill[:n]
+	}
+	out := fmt.Sprintf(tpl, toAny(fill)...)
+	if len(args) > n {
+		// inject extras: crude — append before the closing paren if present.
+		extras := strings.Join(args[n:], ", ")
+		if idx := strings.LastIndex(out, ")"); idx >= 0 {
+			out = out[:idx] + ", " + extras + out[idx:]
+		} else {
+			out += ", " + extras
+		}
+	}
+	return out
+}
+
+// toAny converts []string to []interface{} for fmt.
+func toAny(s []string) []interface{} {
+	out := make([]interface{}, len(s))
+	for i, v := range s {
+		out[i] = v
+	}
+	return out
+}
+
+// notePostProc records (for the minimal loop) that a function used in the query
+// needs client-side post-processing. The current emitter doesn't act on this —
+// it just lets the call pass through — but the hook is here so the post-proc
+// framework (backend/NOTES.md §2.4 / B5) can collect these when it lands.
+func (e *emitter) notePostProc(name string) {
+	if e.postProc == nil {
+		e.postProc = map[string]bool{}
+	}
+	e.postProc[name] = true
 }
 
 // castToSQL maps a to_<type> cast to SQLite's loose typing.

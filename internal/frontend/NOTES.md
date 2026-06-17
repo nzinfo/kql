@@ -273,3 +273,28 @@ parse 的 regex 抽取）留到各后端线 + NeedsPostProc 标记时实现。
 - **`\` 字符**（54）：verbatim 串里的反斜杠边界（lexer edge）。
 - **`| externaldata` storage 子句**（72）：`(`schema`)` 后的 `[StorageAccounts=...]`。
 - 这些都需要更深的 grammar 分支（lambda 体、datatable 求值、union 双重身份）。
+
+## 7. builtin 函数表（F7）
+
+**结构**：`internal/frontend/builtin/builtin.go` —— `Spec{Name, MinArgs, MaxArgs,
+IsAggregate, SQLite, NeedsPostProc}` 表 + `Lookup(name)`（大小写不敏感）。
+**不是**从 kqlparser 抄全部 380+ 函数，而是按语料实际使用频率（ago/tostring/
+dcount/make_set/split/isnotempty/sum/...）建表，逐步补。
+
+**emit 接线**：`sqlite/emit_expr.go` 的 `emitFuncCall` 先查 builtin 表：
+- 有 SQLite 模板 → 用模板（%s 占位填入各参数的 SQL）。
+- `strcat`（变长）→ `a || b || c`；`coalesce`（变长）→ `coalesce(a,b,c)`。
+- 标 NeedsPostProc 的（split/extract/make_set/percentile）→ 记录到 emitter.postProc
+  （hook，留 B5 客户端 post-process 框架用），best-effort 透传。
+- 表里没有的函数 → 沿用旧 best-effort 透传 `NAME(args)`。
+
+**翻译正确性示例**：ago→datetime('now','-'||x)、tostring→CAST AS TEXT、
+iff/iif→CASE、dcount→COUNT(DISTINCT)、countif→SUM(CASE WHEN)、
+make_set→group_concat(DISTINCT)、toint→CAST AS INTEGER、isnotempty→(x!='')。
+
+## 8. summarize 裸列 group-key 保留原名 ⚠️
+
+`summarize ... by state`（裸列 group key，无别名）原本 emit 成 `state AS key0`，
+导致后续 `sort by state` 找不到列（"no such column"）。**修**：裸 *ir.Col 的
+group key 用原列名做别名（`state AS state`）；只有计算表达式且无名的 key 才用
+`key%d`。这是跨 stage 列解析的权宜——真正解决要 F5 binder 跟踪每 stage 的输出 schema。

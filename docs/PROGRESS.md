@@ -18,6 +18,7 @@
 | **B1/B5-min** sqlite 后端 + **pkg/kql** | `4fe4fde` | `internal/backend/` + `sqlite/`（emit IR→SQL）+ `pkg/kql`（Exec API） | **e2e 最小闭环 ✅**：内存 sqlite 建表→KQL→取结果 |
 | **S5-min** CLI | `e77416e` | `cmd/kql/`（main/output/ir：run/validate/explain + csv/json/table） | **命令行可跑 ✅** |
 | **T1–T3-min** 语料回归 | `_next_` | `pkg/kql/testdata/corpus/sentinel/`（89 真实查询）+ `corpus_test.go` | **parse→translate→emit 覆盖 93%**（39%→72%→93%；P1/P2 算子 + 函数管道参数） |
+| **F7-min** builtin 函数表 | `_next_` | `internal/frontend/builtin/`（Spec 表 + SQLite 模板）+ emit 接线 + 执行测试 | **常见函数能执行**：ago/tostring/iff/dcount/countif/make_set/strcat/coalesce/sum/avg/...（9 个执行用例全绿） |
 
 **🎉 当前能力（e2e 最小闭环 + CLI 已打通）**：
 ```go

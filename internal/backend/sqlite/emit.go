@@ -44,13 +44,18 @@ func Emit(pipe *ir.Pipeline) (*backend.Query, error) {
 }
 
 // newEmitter returns a fresh emitter for a single emit run.
-func newEmitter() *emitter { return &emitter{args: map[int]interface{}{}} }
+func newEmitter() *emitter {
+	return &emitter{args: map[int]interface{}{}, postProc: map[string]bool{}}
+}
 
 // emitter tracks numbered placeholder args during a single emit run.
 // nextIdx is the next free placeholder index (1-based); args maps idx→value.
+// postProc collects function names that the catalog flagged NeedsPostProc
+// (hook for the client-side post-proc framework; not acted on in the minimal loop).
 type emitter struct {
-	nextIdx int
-	args    map[int]interface{}
+	nextIdx  int
+	args     map[int]interface{}
+	postProc map[string]bool
 }
 
 // bind assigns the next placeholder index to value and returns "?N".
@@ -223,9 +228,17 @@ func (e *emitter) emitAggregate(from, prev string, s *ir.Aggregate) (string, err
 		if err != nil {
 			return "", err
 		}
+		// Alias: prefer the explicit name; for a bare column reference, keep
+		// the ORIGINAL column name (so `summarize ... by state` projects
+		// `state`, and a following `sort by state` still resolves). Only fall
+		// back to key%d for computed keys without a name.
 		alias := k.Name
 		if alias == "" {
-			alias = fmt.Sprintf("key%d", i)
+			if col, ok := k.Expr.(*ir.Col); ok && col.Name != "" {
+				alias = col.Name
+			} else {
+				alias = fmt.Sprintf("key%d", i)
+			}
 		}
 		selectParts = append(selectParts, fmt.Sprintf("%s AS %s", ex, quoteIdent(alias)))
 		groupParts = append(groupParts, ex)
