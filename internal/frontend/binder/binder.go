@@ -25,11 +25,13 @@ import (
 )
 
 // ColBinding is one column's binding in a schema: its ColID plus the physical
-// name (backend's stored case) and display name (KQL source spelling).
+// name (backend's stored case), display name (KQL source spelling), and the
+// inferred data type.
 type ColBinding struct {
 	ColID        ir.ColID
 	PhysicalName string // backend-stored name (pg lowercases; sqlite keeps) — emit uses this
 	DisplayName  string // KQL source spelling — diagnostics/pretty-print
+	Type         ir.Type // data type (from schema or inferred) — Unknown if not determined
 }
 
 // Schema is an ordered set of column bindings (the output shape of a stage).
@@ -286,9 +288,10 @@ func (b *binder) checkExpr(e ir.Expr, in *Schema) {
 			b.errorf(n.Pos(), "column %q not found in current scope", n.Name)
 			return
 		}
-		// RESOLVE: stamp the ColID and rewrite to the physical name.
+		// RESOLVE: stamp the ColID, rewrite to physical name, set the type.
 		n.ColID = bd.ColID
 		n.Name = bd.PhysicalName
+		n.T = bd.Type
 	case *ir.BinOp:
 		b.checkExpr(n.X, in)
 		b.checkExpr(n.Y, in)

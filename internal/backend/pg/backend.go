@@ -3,6 +3,7 @@ package pg
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"fmt"
 
 	// pgx v5 stdlib adapter registers the "pgx" driver for database/sql.
@@ -92,7 +93,7 @@ func (b *Backend) Schema(table string) (*binder.Schema, error) {
 		return nil, fmt.Errorf("backend not open")
 	}
 	rows, err := b.db.QueryContext(context.Background(),
-		`SELECT column_name FROM information_schema.columns
+		`SELECT column_name, data_type FROM information_schema.columns
 		 WHERE table_name = $1 AND table_schema = current_schema()
 		 ORDER BY ordinal_position`, table)
 	if err != nil {
@@ -101,15 +102,34 @@ func (b *Backend) Schema(table string) (*binder.Schema, error) {
 	defer rows.Close()
 	var cols []binder.ColBinding
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
 			return nil, err
 		}
-		// PhysicalName = pg's stored (lowercased) name. ColID allocated by binder.
-		cols = append(cols, binder.ColBinding{PhysicalName: name, DisplayName: name})
+		cols = append(cols, binder.ColBinding{PhysicalName: name, DisplayName: name, Type: mapPgType(dataType)})
 	}
 	if cols == nil {
 		return nil, fmt.Errorf("table %q not found in schema %s", table, "current")
 	}
 	return &binder.Schema{Cols: cols}, nil
+}
+
+// mapPgType maps a pg data_type string to an ir.Type.
+func mapPgType(pgType string) ir.Type {
+	t := strings.ToLower(pgType)
+	switch {
+	case strings.Contains(t, "int") || strings.Contains(t, "serial") || strings.Contains(t, "bigint") || strings.Contains(t, "smallint"):
+		return ir.TypeLong
+	case strings.Contains(t, "double") || strings.Contains(t, "real") || strings.Contains(t, "numeric") || strings.Contains(t, "decimal"):
+		return ir.TypeReal
+	case strings.Contains(t, "text") || strings.Contains(t, "char") || strings.Contains(t, "varchar"):
+		return ir.TypeString
+	case strings.Contains(t, "bool"):
+		return ir.TypeBool
+	case strings.Contains(t, "timestamp") || strings.Contains(t, "date") || strings.Contains(t, "time"):
+		return ir.TypeDateTime
+	case strings.Contains(t, "json"):
+		return ir.TypeDynamic
+	}
+	return ir.TypeUnknown
 }

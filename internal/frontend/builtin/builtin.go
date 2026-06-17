@@ -143,3 +143,59 @@ func normalize(name string) string {
 	}
 	return string(b)
 }
+
+
+func init() {
+	// Round 2: additional high-frequency functions from corpus + KQL stdlib.
+	adds := []Spec{
+		{Name: "case", MinArgs: 3, MaxArgs: -1, SQLite: "CASE"},
+		{Name: "replace_regex", MinArgs: 3, MaxArgs: 3, NeedsPostProc: true},
+		{Name: "reverse", MinArgs: 1, MaxArgs: 1, SQLite: "reverse(%s)"},
+		{Name: "url_encode", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "url_decode", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "base64_encode_tostring", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "base64_decode_tostring", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "format_datetime", MinArgs: 2, MaxArgs: 2, SQLite: "strftime(%s, %s)"},
+		{Name: "format_timespan", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true},
+		{Name: "datetime_part", MinArgs: 2, MaxArgs: 2, SQLite: "strftime(%s, %s)"},
+		{Name: "dayofmonth", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%d', %s)"},
+		{Name: "dayofweek", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%w', %s)"},
+		{Name: "dayofyear", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%j', %s)"},
+		{Name: "monthofyear", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%m', %s)"},
+		{Name: "getmonth", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%m', %s)"},
+		{Name: "getyear", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%Y', %s)"},
+		{Name: "hourofday", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%H', %s)"},
+		{Name: "second", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%S', %s)"},
+		{Name: "minute", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%M', %s)"},
+		{Name: "hash_sha256", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "hash_md5", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "hash", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "ipv4_is_private", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "isipv4private", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "parse_ipv4", MinArgs: 1, MaxArgs: 1},
+		{Name: "set_union", MinArgs: 2, MaxArgs: -1, NeedsPostProc: true},
+		{Name: "set_intersect", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true},
+		{Name: "set_has_element", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true},
+		{Name: "array_contains", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true},
+		{Name: "pack_dictionary", MinArgs: 1, MaxArgs: -1, NeedsPostProc: true},
+		{Name: "pi", MinArgs: 0, MaxArgs: 0, SQLite: "3.141592653589793"},
+		{Name: "rand", MinArgs: 0, MaxArgs: 2, SQLite: "random()"},
+		{Name: "exp10", MinArgs: 1, MaxArgs: 1, SQLite: "pow(10, %s)"},
+		{Name: "log10", MinArgs: 1, MaxArgs: 1, SQLite: "log(%s, 10)"},
+		{Name: "log2", MinArgs: 1, MaxArgs: 1, SQLite: "log(%s, 2)"},
+		{Name: "gamma", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+		{Name: "variance", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},
+		{Name: "stdevif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, NeedsPostProc: true},
+		{Name: "percentilew", MinArgs: 2, MaxArgs: 2, IsAggregate: true, NeedsPostProc: true},
+		{Name: "percentilesw", MinArgs: 3, MaxArgs: -1, IsAggregate: true, NeedsPostProc: true},
+		{Name: "sumif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: "SUM(CASE WHEN %s THEN %s ELSE 0 END)"},
+		{Name: "avgif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: "AVG(CASE WHEN %s THEN %s ELSE NULL END)"},
+		{Name: "maxif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: "MAX(CASE WHEN %s THEN %s ELSE NULL END)"},
+		{Name: "minif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: "MIN(CASE WHEN %s THEN %s ELSE NULL END)"},
+		{Name: "extend_json", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true},
+		{Name: "json_flatten", MinArgs: 1, MaxArgs: 1, NeedsPostProc: true},
+	}
+	for _, s := range adds {
+		catalog[normalize(s.Name)] = s
+	}
+}

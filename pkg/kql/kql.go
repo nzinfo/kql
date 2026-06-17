@@ -22,6 +22,7 @@ import (
 	"nzinfo/kql/internal/backend/duckdb"
 	"nzinfo/kql/internal/backend/pg"
 	"nzinfo/kql/internal/backend/sqlite"
+	"nzinfo/kql/internal/exec"
 	"nzinfo/kql/internal/frontend/binder"
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/parser"
@@ -218,15 +219,26 @@ func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, err
 	// semantically equivalent and emits the same results. Optimization never
 	// fails the query (a rule bug would change IR but keep emitting valid SQL).
 	defaultEngine.Optimize(pipe)
-	q, err := bk.Emit(pipe)
+	// Execute: emit SQL + run on backend, with client-side post-processing
+	// for operators the backend can't express (mv-expand etc.).
+	er, err := exec.ExecPipeline(ctx, bk, pipe)
 	if err != nil {
-		return nil, fmt.Errorf("emit: %w", err)
+		return nil, err
 	}
-	r, err := bk.Exec(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("exec: %w", err)
+	// Convert exec.Result to backend.Result for the public Result wrapper.
+	return &Result{&backend.Result{
+		Columns: execColsToBackend(er.Columns),
+		Rows:    er.Rows,
+	}}, nil
+}
+
+// execColsToBackend converts exec column names to backend.ResultColumn.
+func execColsToBackend(cols []string) []backend.ResultColumn {
+	out := make([]backend.ResultColumn, len(cols))
+	for i, c := range cols {
+		out[i] = backend.ResultColumn{Name: c}
 	}
-	return &Result{r}, nil
+	return out
 }
 
 // defaultEngine is the standard rule engine applied to every query:

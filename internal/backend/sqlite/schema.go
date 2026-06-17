@@ -1,11 +1,13 @@
 package sqlite
 
 import (
+	"strings"
 	"context"
 	"database/sql"
 	"fmt"
 
 	"nzinfo/kql/internal/frontend/binder"
+	"nzinfo/kql/internal/ir"
 )
 
 // Schema implements binder.SchemaProvider: reads a table's column names via
@@ -35,7 +37,7 @@ func (b *Backend) Schema(table string) (*binder.Schema, error) {
 		}
 		// PhysicalName = stored name (sqlite preserves the declared case).
 		// ColID is allocated by the binder; leave 0 here.
-		cols = append(cols, binder.ColBinding{PhysicalName: name, DisplayName: name})
+		cols = append(cols, binder.ColBinding{PhysicalName: name, DisplayName: name, Type: mapSQLType(typ)})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -44,4 +46,23 @@ func (b *Backend) Schema(table string) (*binder.Schema, error) {
 		return nil, fmt.Errorf("table %q not found", table)
 	}
 	return &binder.Schema{Cols: cols}, nil
+}
+
+// mapSQLType maps a SQLite type string to an ir.Type. SQLite's type affinity is
+// loose; we use the declared type name to infer the closest KQL type.
+func mapSQLType(sqlType string) ir.Type {
+	t := strings.ToLower(sqlType)
+	switch {
+	case strings.Contains(t, "int"):
+		return ir.TypeLong
+	case strings.Contains(t, "real") || strings.Contains(t, "float") || strings.Contains(t, "double") || strings.Contains(t, "num"):
+		return ir.TypeReal
+	case strings.Contains(t, "text") || strings.Contains(t, "char") || strings.Contains(t, "clob"):
+		return ir.TypeString
+	case strings.Contains(t, "bool"):
+		return ir.TypeBool
+	case strings.Contains(t, "blob") || strings.Contains(t, "binary"):
+		return ir.TypeDynamic
+	}
+	return ir.TypeUnknown
 }
