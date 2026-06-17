@@ -83,6 +83,8 @@ kql/
 ## 5. 实现进度
 
 > 按 `docs/phases/README.md` 的 Wave A→G 推进。详见各模块 `NOTES.md`。
+> **实时进度与待办路线图见 `docs/PROGRESS.md`**（已完成阶段、被推迟的方向、依赖、下一步决策）。
+> 更新原则：完成一个阶段或做一个推迟决策时，更新 `docs/PROGRESS.md`。
 
 ### 前端线（F1–F7）
 | 阶段 | 状态 | 产出 |
