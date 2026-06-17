@@ -1,0 +1,1 @@
+SecurityEvent | extend Severity = case(EventID == 4625, "High", EventID == 4624, "Low", "Medium")

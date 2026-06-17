@@ -71,6 +71,19 @@ func (e *emitter) emitExpr(expr ir.Expr, alias string) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("CASE WHEN %s THEN %s ELSE %s END", cond, then, els), nil
+	case *ir.List:
+		// A bare list (not the RHS of an IN op) — emit as a parenthesised,
+		// comma-separated value list. Used when a list appears in a context the
+		// minimal emitter doesn't specialise (rare; usually an aggregate arg).
+		parts := make([]string, 0, len(n.Elems))
+		for _, el := range n.Elems {
+			s, err := e.emitExpr(el, alias)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, s)
+		}
+		return "(" + strings.Join(parts, ", ") + ")", nil
 	}
 	return "", fmt.Errorf("unsupported expression %T", expr)
 }
@@ -88,8 +101,12 @@ func (e *emitter) emitLit(n *ir.Lit) (string, error) {
 // emitBinOp emits a binary operation. String operators map to LIKE/instr
 // approximations (case rules differ from KQL — acceptable for e2e; F7 refines).
 func (e *emitter) emitBinOp(n *ir.BinOp, alias string) (string, error) {
-	// IN-list: right side is a ListExpr → emit as X IN (?, ?, ...).
-	if n.Op == token.IN || n.Op == token.NOTIN {
+	// IN-style list operators: X in/!in/in~/!in~/has_any/has_all (a,b,...). The
+	// right operand is an *ir.List; emit as X IN (...) (the ~ variants are
+	// case-insensitive — approximated as plain IN for the minimal loop; exact
+	// case-insensitive IN needs COLLATE NOCASE per element, flagged in NOTES).
+	if n.Op == token.IN || n.Op == token.NOTIN || n.Op == token.INCI ||
+		n.Op == token.HASANY || n.Op == token.HASALL {
 		return e.emitInList(n, alias)
 	}
 	x, err := e.emitExpr(n.X, alias)
@@ -139,10 +156,16 @@ func (e *emitter) emitInList(n *ir.BinOp, alias string) (string, error) {
 		phs = append(phs, ph)
 	}
 	joined := strings.Join(phs, ", ")
-	if n.Op == token.NOTIN {
+	switch n.Op {
+	case token.NOTIN, token.NOTINCI:
 		return fmt.Sprintf("(%s NOT IN (%s))", x, joined), nil
+	case token.INCI:
+		// case-insensitive IN: approximate as plain IN. COLLATE NOCASE per elem
+		// is the correct form (see NOTES); deferred until it matters.
+		return fmt.Sprintf("(%s IN (%s))", x, joined), nil
+	default: // IN, HASANY, HASALL
+		return fmt.Sprintf("(%s IN (%s))", x, joined), nil
 	}
-	return fmt.Sprintf("(%s IN (%s))", x, joined), nil
 }
 
 // sqlBinaryOp returns the SQL operator for arithmetic/comparison/logical KQL

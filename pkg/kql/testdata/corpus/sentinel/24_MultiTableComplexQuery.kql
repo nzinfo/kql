@@ -1,0 +1,24 @@
+let timeframe = 7d;
+let SuspiciousUsers = SigninLogs
+| where TimeGenerated > ago(timeframe)
+| where ResultType != "0"
+| summarize FailedCount = count() by UserPrincipalName
+| where FailedCount > 10
+| project UserPrincipalName;
+let UserAlerts = SecurityAlert
+| where TimeGenerated > ago(timeframe)
+| mv-expand todynamic(Entities)
+| extend EntityType = tostring(Entities.Type)
+| where EntityType == "account"
+| extend AlertUPN = tostring(Entities.Name)
+| summarize AlertCount = count(), AlertTypes = make_set(AlertName) by AlertUPN;
+SuspiciousUsers
+| join kind=leftouter (UserAlerts) on $left.UserPrincipalName == $right.AlertUPN
+| join kind=leftouter (
+    AuditLogs
+    | where TimeGenerated > ago(timeframe)
+    | where OperationName has "password"
+    | extend TargetUPN = tostring(TargetResources[0].userPrincipalName)
+    | summarize PasswordOps = count() by TargetUPN
+) on $left.UserPrincipalName == $right.TargetUPN
+| project UserPrincipalName, AlertCount = coalesce(AlertCount, 0), PasswordOps = coalesce(PasswordOps, 0), AlertTypes

@@ -1,0 +1,1 @@
+SecurityEvent | extend lower_account = tolower(Account) | extend upper_computer = toupper(Computer) | where strlen(Account) > 10

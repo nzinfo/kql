@@ -1,0 +1,6 @@
+DeviceEvents
+| where ActionType == "ServiceInstalled"
+| extend ServiceName = tostring(parse_json(AdditionalFields).ServiceName)
+| extend ServicePath = tostring(parse_json(AdditionalFields).ServiceStartType)
+| where ServicePath has_any (@"\Temp\", @"\AppData\", @"\ProgramData\", @"\Users\Public\")
+| project-reorder Timestamp, DeviceName, ServiceName, ServicePath

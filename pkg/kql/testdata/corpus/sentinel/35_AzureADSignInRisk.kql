@@ -1,0 +1,8 @@
+SigninLogs
+| where RiskLevelDuringSignIn != "none"
+| where ResultType == "0"
+| extend DeviceOS = tostring(DeviceDetail.operatingSystem)
+| extend DeviceTrust = tostring(DeviceDetail.trustType)
+| summarize RiskySignins = count(), UniqueApps = dcount(AppDisplayName), Locations = make_set(Location)
+by UserPrincipalName, RiskLevelDuringSignIn, DeviceOS, DeviceTrust
+| order by RiskySignins desc

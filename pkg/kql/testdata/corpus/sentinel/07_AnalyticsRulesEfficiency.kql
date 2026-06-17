@@ -1,0 +1,14 @@
+let TimeRange = 30d;
+SecurityIncident
+| where TimeGenerated > ago(TimeRange)
+| summarize arg_max(TimeGenerated, *) by IncidentNumber
+| where RelatedAnalyticRuleIds != "[]"
+| where isnotempty(Classification)
+| summarize
+     TotalIncidentsTriggered = count(),
+     TotalUndetermined = countif(Classification == "Undetermined"),
+     TotalBenignPositive = countif(Classification == "BenignPositive"),
+     TotalTruePositive = countif(Classification == "TruePositive"),
+     TotalFalsePositive = countif(Classification == "FalsePositive")
+     by tostring(RelatedAnalyticRuleIds), Title
+| sort by TotalFalsePositive, TotalIncidentsTriggered

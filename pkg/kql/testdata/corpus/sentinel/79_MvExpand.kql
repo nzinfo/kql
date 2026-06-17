@@ -1,0 +1,1 @@
+SecurityEvent | mv-expand kind=array Entities | extend EntityType = tostring(Entities.Type)

@@ -1,0 +1,1 @@
+union SecurityEvent, WindowsEvent | where TimeGenerated > ago(1d)

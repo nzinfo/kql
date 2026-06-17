@@ -58,6 +58,8 @@ func (p *Parser) parsePipedOperator() ast.Operator {
 		return p.parseCountOp(pipePos)
 	case token.TOP:
 		return p.parseTopOp(pipePos)
+	case token.PROJECTREORDER:
+		return p.parseProjectReorderOp(pipePos)
 	}
 	// Unknown operator: record an error and recover to the next | or ;.
 	p.error(p.pos, "unknown tabular operator "+p.cur.String())

@@ -1,0 +1,6 @@
+DeviceEvents
+| where ActionType == "WmiBindEventFilterToConsumer"
+| project-reorder Timestamp, DeviceName, AdditionalFields
+| extend Consumer = tostring(parse_json(AdditionalFields).Consumer)
+| extend Filter = tostring(parse_json(AdditionalFields).Filter)
+| where isnotempty(Consumer)

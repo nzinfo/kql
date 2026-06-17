@@ -1,0 +1,19 @@
+let lookback = 14d;
+let timeframe = 1h;
+let bytethreshold = 50000000;
+DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "ConnectionSuccess"
+| where RemotePort in (80, 443, 8080, 8443)
+| where not(RemoteIP startswith "10." or RemoteIP startswith "192.168." or RemoteIP startswith "172.")
+| summarize TotalBytesSent = sum(SentBytes), TotalBytesReceived = sum(ReceivedBytes)
+    by DeviceName, RemoteIP, RemotePort, bin(TimeGenerated, timeframe)
+| extend Ratio = TotalBytesSent * 1.0 / max_of(TotalBytesReceived, 1)
+| where TotalBytesSent > bytethreshold and Ratio > 10
+| summarize
+    HourlyExfil = make_list(TotalBytesSent),
+    TimeStamps = make_list(TimeGenerated)
+    by DeviceName, RemoteIP, RemotePort
+| extend outliers = series_decompose_anomalies(HourlyExfil, 3)
+| mv-expand TimeStamps, HourlyExfil, outliers
+| where outliers > 0

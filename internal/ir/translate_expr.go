@@ -32,7 +32,9 @@ func (t *translator) translateExpr(e ast.Expr) Expr {
 	case *ast.UnaryExpr:
 		return &UnaryOp{Position: n.OpPos, Op: n.Op, X: t.translateExpr(n.X)}
 	case *ast.ParenExpr:
-		// Parentheses are structural only in IR; unwrap.
+		// Parentheses are structural only in IR; unwrap the scalar expression.
+		// (A parenthesised sub-pipeline appears only as a join's right side,
+		// handled by translateJoin's ParenExpr unwrap — never as a scalar expr.)
 		return t.translateExpr(n.X)
 	case *ast.CallExpr:
 		return t.translateCall(n)

@@ -1,0 +1,13 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "mshta.exe")
+| where InitiatingProcessFileName in~ ("winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "msaccess.exe")
+| extend CommandLineLength = strlen(ProcessCommandLine)
+| summarize
+    EventCount = count(),
+    AvgCommandLineLength = avg(CommandLineLength),
+    Devices = make_set(DeviceName, 10),
+    SampleCommands = make_set(ProcessCommandLine, 5)
+    by FileName, InitiatingProcessFileName, AccountName
+| where EventCount > 2 or AvgCommandLineLength > 500
+| order by EventCount desc

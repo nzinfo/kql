@@ -1,0 +1,1 @@
+SecurityEvent | where ((EventID == 4624) and ((Status == \"Success\") or (Status == \"0\")))

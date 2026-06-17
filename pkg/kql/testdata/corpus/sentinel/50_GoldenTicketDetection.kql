@@ -1,0 +1,7 @@
+SecurityEvent
+| where EventID == 4769
+| extend TicketOptions = extract(@'TicketOptions">(.*?)<', 1, EventData)
+| extend TicketEncryptionType = extract(@'TicketEncryptionType">(.*?)<', 1, EventData)
+| where TicketEncryptionType == "0x17"
+| where TicketOptions == "0x40810000"
+| project-reorder TimeGenerated, Computer, TargetUserName, ServiceName, IpAddress

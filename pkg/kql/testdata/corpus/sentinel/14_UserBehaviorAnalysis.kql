@@ -1,0 +1,18 @@
+let timeframe = 14d;
+let baseline = 30d;
+BehaviorAnalytics
+| where TimeGenerated > ago(timeframe)
+| where ActivityType has_any ("FailedLogOn", "LogOn", "ElevateAccess")
+| summarize
+    ActivityCount = count(),
+    UniqueDevices = dcount(SourceDevice),
+    UniqueIPs = dcount(SourceIPAddress),
+    AvgRiskScore = avg(InvestigationPriority)
+    by UserPrincipalName, ActivityType, bin(TimeGenerated, 1d)
+| join kind=leftouter (
+    BehaviorAnalytics
+    | where TimeGenerated between (ago(baseline) .. ago(timeframe))
+    | summarize BaselineCount = count() by UserPrincipalName, ActivityType
+) on UserPrincipalName, ActivityType
+| extend AnomalyScore = iff(BaselineCount > 0, (ActivityCount - BaselineCount) * 1.0 / BaselineCount, 1.0)
+| where AnomalyScore > 0.5 or AvgRiskScore > 50

@@ -1,0 +1,1 @@
+SecurityEvent | where TimeGenerated > ago(1d) | where TimeGenerated < ago(1h)

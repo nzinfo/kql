@@ -1,0 +1,12 @@
+let Servers = DeviceInfo
+| where DeviceType == 'Server'
+| summarize make_set(DeviceId);
+let WorkStations = DeviceInfo
+| where DeviceType == 'Workstation'
+| summarize make_set(DeviceId);
+DeviceEvents
+| where ActionType == 'UserAccountCreated'
+| extend DeviceNameWithoutDomain = extract(@'(.*?)\.', 1, DeviceName)
+| where AccountDomain =~ DeviceNameWithoutDomain
+| extend DeviceType = iff(DeviceId in (WorkStations), 'WorkStation', iff(DeviceId in (Servers), 'Server', 'Other'))
+| project Timestamp, DeviceName, DeviceType, ActionType, AccountDomain, AccountName, AccountSid

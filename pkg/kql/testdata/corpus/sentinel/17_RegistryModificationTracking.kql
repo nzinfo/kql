@@ -1,0 +1,19 @@
+let SuspiciousKeys = dynamic([
+    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    @"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+    @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon",
+    @"SYSTEM\CurrentControlSet\Services",
+    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run"
+]);
+DeviceRegistryEvents
+| where TimeGenerated > ago(24h)
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (SuspiciousKeys)
+| where InitiatingProcessFileName !in ("svchost.exe", "services.exe", "msiexec.exe", "TiWorker.exe")
+| summarize
+    ModificationCount = count(),
+    Values = make_set(RegistryValueName, 10),
+    Data = make_set(RegistryValueData, 10)
+    by DeviceName, RegistryKey, InitiatingProcessFileName, InitiatingProcessCommandLine
+| where ModificationCount > 1
+| order by ModificationCount desc

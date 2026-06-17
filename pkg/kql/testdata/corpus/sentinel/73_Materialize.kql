@@ -1,0 +1,1 @@
+let data = materialize(SecurityEvent | where TimeGenerated > ago(1d)); data | summarize count() by EventID

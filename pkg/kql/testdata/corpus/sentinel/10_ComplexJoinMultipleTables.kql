@@ -1,0 +1,17 @@
+let timeframe = 1d;
+let threshold = 3;
+SigninLogs
+| where TimeGenerated >= ago(timeframe)
+| where ResultType != "0"
+| where AppDisplayName has_any ("Azure", "Office", "SharePoint", "OneDrive")
+| summarize FailedAttempts = count(), Apps = make_set(AppDisplayName), Resources = make_set(ResourceDisplayName)
+    by UserPrincipalName, IPAddress, Location, tostring(DeviceDetail), UserAgent
+| where FailedAttempts >= threshold
+| join kind=inner (
+    AuditLogs
+    | where TimeGenerated >= ago(timeframe)
+    | where OperationName has_any ("Add member to group", "Add user", "Update user")
+    | extend TargetUPN = tostring(TargetResources[0].userPrincipalName)
+    | project TimeGenerated, InitiatedByUPN = tostring(InitiatedBy.user.userPrincipalName), OperationName, TargetUPN
+) on $left.UserPrincipalName == $right.InitiatedByUPN
+| project-reorder UserPrincipalName, FailedAttempts, Apps, IPAddress, Location

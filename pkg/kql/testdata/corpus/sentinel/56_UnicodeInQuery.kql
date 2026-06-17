@@ -1,0 +1,1 @@
+SecurityEvent | where Message contains "utilisateur" or Message contains "Benutzer"

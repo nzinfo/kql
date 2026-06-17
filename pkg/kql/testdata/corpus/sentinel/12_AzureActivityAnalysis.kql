@@ -1,0 +1,14 @@
+AzureActivity
+| where TimeGenerated > ago(7d)
+| where OperationNameValue has_any ("Microsoft.Compute/virtualMachines/write", "Microsoft.Compute/virtualMachines/delete")
+| where ActivityStatusValue == "Success"
+| extend ResourceInfo = parse_json(Properties)
+| extend VMName = tostring(split(ResourceId, "/")[-1])
+| summarize
+    Operations = count(),
+    FirstOperation = min(TimeGenerated),
+    LastOperation = max(TimeGenerated),
+    VMList = make_set(VMName)
+    by CallerIpAddress, Caller, OperationNameValue
+| where Operations > 5
+| order by Operations desc

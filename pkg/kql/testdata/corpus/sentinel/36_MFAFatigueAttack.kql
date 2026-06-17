@@ -1,0 +1,7 @@
+AADNonInteractiveUserSignInLogs
+| where TimeGenerated > ago(1h)
+| where ResultType == "50074"
+| summarize MFARequests = count(), UniqueIPs = dcount(IPAddress), IPList = make_set(IPAddress)
+by UserPrincipalName, AppDisplayName, bin(TimeGenerated, 5m)
+| where MFARequests > 5
+| order by MFARequests desc

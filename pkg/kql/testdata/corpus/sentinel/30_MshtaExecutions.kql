@@ -1,0 +1,4 @@
+let SuspiciousChildProcesses = dynamic(['cmd.exe', 'powershell.exe', 'bash.exe', 'csscript.exe', 'mshta.exe', 'msiexec.exe', 'rundll32.exe']);
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ 'mshta.exe' or ProcessVersionInfoOriginalFileName =~ 'mshta.exe'
+| project-reorder Timestamp, DeviceName, ProcessCommandLine, InitiatingProcessCommandLine, AccountUpn, ProcessVersionInfoOriginalFileName

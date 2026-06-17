@@ -1,0 +1,19 @@
+let lookback = 7d;
+let threshold = 100;
+DnsEvents
+| where TimeGenerated > ago(lookback)
+| where QueryType in ("A", "AAAA", "CNAME")
+| extend Domain = tostring(split(Name, ".")[-2])
+| extend TLD = tostring(split(Name, ".")[-1])
+| where TLD !in ("local", "internal", "corp", "lan")
+| summarize
+    QueryCount = count(),
+    UniqueSubdomains = dcount(Name),
+    FirstQuery = min(TimeGenerated),
+    LastQuery = max(TimeGenerated),
+    ClientIPs = make_set(ClientIP, 50)
+    by Domain, TLD
+| where QueryCount > threshold or UniqueSubdomains > 50
+| extend EntropyScore = log(UniqueSubdomains) / log(2)
+| where EntropyScore > 3
+| order by QueryCount desc

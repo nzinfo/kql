@@ -48,10 +48,40 @@ func (p *Parser) parseJoinOp(pipePos token.Pos) *ast.JoinOp {
 	}
 }
 
-// parseJoinRight parses the right side of a join: a parenthesised expression
-// (often a sub-pipeline) or a bare table reference.
+// parseJoinRight parses the right side of a join. KQL accepts:
+//   - a bare table reference:        join ... on ...
+//   - a parenthesised table ref:     join (...) on ...
+//   - a parenthesised SUB-PIPELINE:  join (T | where ... | summarize ...) on ...
+//
+// The sub-pipeline form is common in real queries (the corpus shows it in most
+// join examples). We distinguish it from a plain parenthesised expression by
+// lookahead: if the `(` is followed by `<source> |`, it's a pipeline; otherwise
+// it's an expression (e.g. `join (MyTable) on k`).
 func (p *Parser) parseJoinRight() ast.Expr {
+	if p.cur == token.LPAREN {
+		if p.isParenPipeline() {
+			// Parse a full pipeline and wrap it in parens (ParenExpr) so the
+			// translator can recognise the sub-pipeline form.
+			lparen := p.pos
+			p.next() // consume (
+			pipe := p.parsePipeline()
+			rparen := p.expect(token.RPAREN)
+			return &ast.ParenExpr{Lparen: lparen, X: pipe, Rparen: rparen}
+		}
+	}
 	return p.ParseExpr()
+}
+
+// isParenPipeline reports whether the current `(` begins a sub-pipeline, i.e.
+// the tokens after `(` form `<source> |`. It uses save/restore lookahead.
+func (p *Parser) isParenPipeline() bool {
+	s := p.save()
+	p.next() // consume (
+	// Parse a source expression; if the next token is PIPE, it's a pipeline.
+	_ = p.ParseExpr()
+	isPipe := p.cur == token.PIPE
+	p.restore(s)
+	return isPipe
 }
 
 // joinKindFromParams maps a `kind=<value>` parameter (case-insensitive) to a

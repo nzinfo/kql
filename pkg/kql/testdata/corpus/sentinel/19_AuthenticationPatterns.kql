@@ -1,0 +1,17 @@
+let timeframe = 7d;
+union SigninLogs, AADNonInteractiveUserSignInLogs
+| where TimeGenerated > ago(timeframe)
+| extend DeviceOS = tostring(DeviceDetail.operatingSystem)
+| extend DeviceBrowser = tostring(DeviceDetail.browser)
+| extend DeviceId = tostring(DeviceDetail.deviceId)
+| summarize
+    SuccessCount = countif(ResultType == "0"),
+    FailureCount = countif(ResultType != "0"),
+    UniqueDevices = dcount(DeviceId),
+    UniqueIPs = dcount(IPAddress),
+    UniqueLocations = dcount(Location),
+    OSTypes = make_set(DeviceOS, 5),
+    Browsers = make_set(DeviceBrowser, 5)
+    by UserPrincipalName, AppDisplayName, bin(TimeGenerated, 1h)
+| extend FailureRate = FailureCount * 100.0 / (SuccessCount + FailureCount)
+| where FailureRate > 30 or UniqueLocations > 3

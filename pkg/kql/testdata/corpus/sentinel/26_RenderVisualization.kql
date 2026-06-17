@@ -1,0 +1,5 @@
+SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID in (4624, 4625, 4648, 4672)
+| summarize EventCount = count() by EventID, bin(TimeGenerated, 1h)
+| render timechart with (title="Authentication Events Over Time", xtitle="Time", ytitle="Event Count")

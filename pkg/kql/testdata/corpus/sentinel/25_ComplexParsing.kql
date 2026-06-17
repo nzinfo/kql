@@ -1,0 +1,16 @@
+Syslog
+| where TimeGenerated > ago(1d)
+| where Facility == "authpriv" and SeverityLevel in ("err", "warning", "crit")
+| parse SyslogMessage with * "user=" User:string " " *
+| parse SyslogMessage with * "src=" SourceIP:string " " *
+| parse SyslogMessage with * "port=" Port:int " " *
+| parse SyslogMessage with * "proto=" Protocol:string *
+| where isnotempty(User)
+| summarize
+    EventCount = count(),
+    UniqueSourceIPs = dcount(SourceIP),
+    UniquePorts = dcount(Port),
+    SourceIPList = make_set(SourceIP, 20),
+    PortList = make_set(Port, 20)
+    by Computer, User, ProcessName
+| where EventCount > 100 or UniqueSourceIPs > 5

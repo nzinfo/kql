@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where ProcessCommandLine contains "psexec.exe"
+| extend RemoteDevice = extract(@'\\\\(.*)c:', 1, ProcessCommandLine)
+| summarize TotalRemoteDevices = dcount(RemoteDevice), RemoteDeviceList = make_set(RemoteDevice), ExecutedCommands = make_set(ProcessCommandLine) by DeviceName
+| sort by TotalRemoteDevices

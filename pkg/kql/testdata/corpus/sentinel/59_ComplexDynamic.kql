@@ -1,0 +1,1 @@
+let items = dynamic(["a", "b", "c"]); SecurityEvent | where Account has_any (items)

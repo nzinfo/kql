@@ -1,0 +1,5 @@
+SecurityEvent
+| where EventID == 4624
+| where LogonType == 9
+| where LogonProcessName == "seclogo"
+| project-reorder TimeGenerated, Computer, TargetUserName, TargetDomainName, IpAddress, ProcessName

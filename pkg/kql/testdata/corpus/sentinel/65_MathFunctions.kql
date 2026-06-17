@@ -1,0 +1,1 @@
+SecurityEvent | summarize cnt = count() | extend log_cnt = log(cnt), sqrt_cnt = sqrt(cnt), abs_val = abs(cnt - 100)

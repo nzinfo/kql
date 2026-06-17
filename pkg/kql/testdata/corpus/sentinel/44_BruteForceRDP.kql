@@ -1,0 +1,7 @@
+SecurityEvent
+| where EventID == 4625
+| where LogonType == 10
+| summarize FailedAttempts = count(), UniqueAccounts = dcount(TargetAccount), Accounts = make_set(TargetAccount)
+by IpAddress, Computer, bin(TimeGenerated, 1h)
+| where FailedAttempts > 20
+| order by FailedAttempts desc

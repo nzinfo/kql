@@ -256,6 +256,13 @@ func (l *Lexer) scanIdentifier(pos token.Pos) Token {
 		}
 	}
 
+	// "in~" is the case-insensitive IN (g4 IN_CI: 'in~'). The base lookup
+	// resolved "in" → IN; upgrade to INCI if a '~' immediately follows.
+	if tok == token.IN && l.ch == '~' {
+		l.next() // consume ~
+		return Token{Type: token.INCI, Pos: pos, Lit: "in~"}
+	}
+
 	// "matches regex" is a two-word keyword (g4 MATCHES_REGEX).
 	if lit == "matches" && l.skipSpacesAndCheck("regex") {
 		return Token{Type: token.MATCHESREGEX, Pos: pos, Lit: "matches regex"}

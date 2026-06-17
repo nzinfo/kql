@@ -1,0 +1,1 @@
+DeviceProcessEvents | where InitiatingProcessParentCreationTimeFromProcessCreationTime > 1000

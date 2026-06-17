@@ -62,7 +62,7 @@ func (p *Parser) parseEquality() ast.Expr {
 		p.next()
 		right := p.parseRelational()
 		return &ast.BinaryExpr{X: left, OpPos: opPos, Op: op, Y: right}
-	case token.IN, token.NOTIN, token.NOTINCI, token.HASANY, token.HASALL:
+	case token.IN, token.INCI, token.NOTIN, token.NOTINCI, token.HASANY, token.HASALL:
 		return p.parseInList(left)
 	case token.BETWEEN, token.NOTBETWEEN:
 		return p.parseBetween(left)

@@ -99,18 +99,24 @@ func (t *translator) translateSortKeys(in []*ast.OrderExpr) []SortKey {
 }
 
 // translateJoin converts an AST JoinOp to an IR Join. The right side may be a
-// table reference or a parenthesised sub-pipeline.
+// table reference, a parenthesised sub-pipeline (ParenExpr{X: *Pipeline}), or
+// a bare Pipeline.
 func (t *translator) translateJoin(n *ast.JoinOp) *Join {
 	var right *Pipeline
 	if n.Right != nil {
-		// If the right side is a parenthesised pipeline expression, translate
-		// it; else wrap a bare table ref as a single-source pipeline.
-		if subPipe, ok := n.Right.(*ast.Pipeline); ok {
+		rightExpr := n.Right
+		// Unwrap a ParenExpr to find the inner Pipeline if present.
+		if pe, ok := rightExpr.(*ast.ParenExpr); ok {
+			if inner, ok := pe.X.(*ast.Pipeline); ok {
+				rightExpr = inner
+			}
+		}
+		if subPipe, ok := rightExpr.(*ast.Pipeline); ok {
 			right = t.translatePipeline(subPipe)
 		} else {
 			right = &Pipeline{
-				Position: n.Right.Pos(),
-				Source:   t.translateSource(n.Right),
+				Position: rightExpr.Pos(),
+				Source:   t.translateSource(rightExpr),
 			}
 		}
 	}

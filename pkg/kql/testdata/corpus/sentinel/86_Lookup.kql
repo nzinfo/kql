@@ -1,0 +1,1 @@
+SecurityEvent | lookup kind=leftouter (datatable(Code:int, Desc:string)[4624, "Success", 4625, "Failure"]) on $left.EventID == $right.Code

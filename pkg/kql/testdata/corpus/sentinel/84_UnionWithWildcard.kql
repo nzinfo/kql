@@ -1,0 +1,1 @@
+union Security* | summarize count() by Type

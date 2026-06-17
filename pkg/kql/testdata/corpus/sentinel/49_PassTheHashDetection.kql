@@ -1,0 +1,6 @@
+SecurityEvent
+| where EventID == 4624
+| where LogonType == 9
+| where AuthenticationPackageName == "Negotiate"
+| where LogonProcessName == "seclogo"
+| project-reorder TimeGenerated, Computer, TargetUserName, TargetDomainName, WorkstationName, IpAddress

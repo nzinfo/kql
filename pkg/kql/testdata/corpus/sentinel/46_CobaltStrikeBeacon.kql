@@ -1,0 +1,6 @@
+DeviceNetworkEvents
+| where RemotePort in (80, 443, 8080, 8443)
+| where ActionType == "ConnectionSuccess"
+| summarize ConnectionCount = count(), BytesSent = sum(SentBytes), BytesReceived = sum(ReceivedBytes)
+by DeviceName, RemoteIP, RemotePort, bin(Timestamp, 1m)
+| where ConnectionCount > 50 and BytesSent < 1000 and BytesReceived < 5000

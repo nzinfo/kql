@@ -1,0 +1,5 @@
+DeviceRegistryEvents
+| where RegistryKey has_any (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", @"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce")
+| where ActionType == "RegistryValueSet"
+| where RegistryValueData has_any (".exe", ".dll", ".bat", ".ps1", ".vbs", "powershell", "cmd")
+| project-reorder Timestamp, DeviceName, RegistryKey, RegistryValueName, RegistryValueData

@@ -1,0 +1,11 @@
+let starttime = 14d;
+let endtime = 0d;
+let interval = 1h;
+SecurityEvent
+| where TimeGenerated between (ago(starttime) .. ago(endtime))
+| where EventID == 4625
+| make-series FailedLogons = count() default = 0 on TimeGenerated from ago(starttime) to ago(endtime) step interval by Computer
+| extend (anomalies, score, baseline) = series_decompose_anomalies(FailedLogons, 1.5, -1, 'linefit')
+| mv-expand TimeGenerated, FailedLogons, anomalies, score, baseline
+| where anomalies == 1
+| project TimeGenerated, Computer, FailedLogons, score, baseline

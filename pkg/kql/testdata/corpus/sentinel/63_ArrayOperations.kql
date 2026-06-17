@@ -1,0 +1,1 @@
+SecurityEvent | extend arr = pack_array(Account, Computer, IpAddress) | where array_length(arr) > 0

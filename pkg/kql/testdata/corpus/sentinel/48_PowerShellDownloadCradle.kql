@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe" or FileName =~ "pwsh.exe"
+| where ProcessCommandLine has_any ("WebClient", "DownloadString", "DownloadFile", "Invoke-WebRequest", "iwr", "curl", "wget", "Net.WebClient", "Start-BitsTransfer")
+| project-reorder Timestamp, DeviceName, ProcessCommandLine, InitiatingProcessFileName

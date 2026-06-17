@@ -234,6 +234,7 @@ const (
 	NOTBETWEEN // !between
 	NOTIN      // !in
 	NOTINCI    // !in~ (case-insensitive)
+	INCI       // in~ (case-insensitive) — g4 IN_CI
 
 	// Keywords - Misc
 	CLUSTER
@@ -446,6 +447,7 @@ var tokenStrings = [...]string{
 	NOTBETWEEN: "!between",
 	NOTIN:      "!in",
 	NOTINCI:    "!in~",
+	INCI:       "in~",
 
 	CLUSTER: "cluster",
 	NULL:    "null",
@@ -492,7 +494,7 @@ func (t Token) Precedence() int {
 		NOTHASPREFIX, NOTHASPREFIXCS, NOTHASSUFFIX, NOTHASSUFFIXCS,
 		NOTLIKE, NOTLIKECS,
 		// List/range operators
-		BETWEEN, NOTBETWEEN, IN, NOTIN, NOTINCI:
+		BETWEEN, NOTBETWEEN, IN, INCI, NOTIN, NOTINCI:
 		return 3
 	case ADD, SUB:
 		return 4

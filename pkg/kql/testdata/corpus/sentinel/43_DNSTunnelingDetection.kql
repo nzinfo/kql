@@ -1,0 +1,7 @@
+DnsEvents
+| where TimeGenerated > ago(1d)
+| extend SubdomainLength = strlen(tostring(split(Name, ".")[0]))
+| where SubdomainLength > 30
+| summarize QueryCount = count(), UniqueSubdomains = dcount(Name), SampleQueries = make_set(Name, 10)
+by ClientIP, QueryType
+| where UniqueSubdomains > 100 or QueryCount > 500

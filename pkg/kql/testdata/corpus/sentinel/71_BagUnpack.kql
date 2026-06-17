@@ -1,0 +1,1 @@
+SecurityEvent | extend Details = pack("Event", EventID, "Time", TimeGenerated) | evaluate bag_unpack(Details)

@@ -1,0 +1,3 @@
+IdentityInfo
+| where AssignedRoles contains "Global Admin"
+| distinct AccountName, AccountDomain, AccountUPN, AccountSID

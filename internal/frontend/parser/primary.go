@@ -48,6 +48,21 @@ func (p *Parser) parsePrimary() ast.Expr {
 		rparen := p.expect(token.RPAREN)
 		return &ast.ParenExpr{Lparen: lparen, X: first, Rparen: rparen}
 
+	case token.LBRACKET:
+		// Array literal [ e1, e2, ... ] — appears inside dynamic([...]) and as
+		// a standalone array expression. g4 arrayLiteral.
+		lbracket := p.pos
+		p.next()
+		var elems []ast.Expr
+		if p.cur != token.RBRACKET {
+			elems = append(elems, p.ParseExpr())
+			for p.accept(token.COMMA) {
+				elems = append(elems, p.ParseExpr())
+			}
+		}
+		rbracket := p.expect(token.RBRACKET)
+		return &ast.ListExpr{Lparen: lbracket, Elems: elems, Rparen: rbracket}
+
 	case token.MUL: // `*` wildcard (count(*), project *)
 		pos := p.pos
 		p.next()

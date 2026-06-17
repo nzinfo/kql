@@ -231,3 +231,30 @@ let 的 RHS 若无 `|`，回退为纯标量 Expr（`let n = 5` 的 Expr 是 Basi
 ### 后续待做（F5/F7）
 - F5 binder：符号/类型/schema 流、列绑定到物理列 ID、严格模式。
 - F7 builtin：从 kqlparser/builtin 抽 380+ 函数清单。
+
+## 5. 语料覆盖（T1–T3）
+
+**语料来源**：`.source-projects/kql-parser/fuzz_corpus_test.go`（Microsoft Sentinel / Defender
+真实狩猎查询）→ 抽取 89 个 `.kql` 文件到 `pkg/kql/testdata/corpus/sentinel/`。
+提取器用 go/ast walker，见 `testdata/corpus/README.md`。
+
+**回归测试**：`pkg/kql/corpus_test.go`
+- `TestCorpusCoverage`：全量 89 个查询过 parse→translate→emit，记录通过率（**当前 64/89 = 72%**）。
+- `TestCorpusP0Subset`：排除 P1+ 算子（parse/mv-expand/make-series/consume/getschema/...）后的 P0 子集，要求 ≥90%（**当前 61/67 = 91%**）。
+- 这两个测试是 parser/translator 的回归护栏：任何能解析的查询不能因为重构而退步。
+
+**一轮修复（39%→72%，2026-06-17）从语料挖出的真实缺口**：
+
+1. **join 子管道**：`join kind=... (T | where ... | ...) on ...` 的右括号里是完整管道，不是标量表达式。`parseJoinRight` 现在用 lookahead 区分 `(管道)` vs `(表达式)`，translator 的 `translateJoin` unwrap ParenExpr 找内层 Pipeline。
+2. **`project-reorder`**：高频算子。P0-adjacent，暂复用 ProjectOp 表示（语义有损——需要 F5 binder 知道完整输入列才能真正重排）。
+3. **数组字面量 `[...]`**：`dynamic([...])` 和独立数组。`parsePrimary` 新增 `case token.LBRACKET` → ListExpr。（影响 7 个查询，最大单一缺口）
+4. **`in~` / INCI token**：case-insensitive IN（g4 `IN_CI: 'in~'`）。原 lexer 只处理 `!in~`，正向 `in~` 把 `~` 留成游离 token → ILLEGAL。token 表加 INCI，scanIdentifier 在识别到 IN 后检查尾随 `~` 升级为 INCI。emit 把 `in~`/`has_any`/`has_all` 都按 IN-list 处理。
+
+## 6. 语料遗留缺口（下一轮目标）
+
+剩余 25 个 parse 失败分类：
+- **真 P1+ 算子**（占多数）：`parse`/`parse-where`、`make-series`、`mv-expand`、`externaldata`、`partition`、`materialize`、`datatable`、`consume`/`getschema`/`serialize`、`render`、函数式 `let f(x)=...`。
+- **`materialize(P | ...)`**：函数调用带管道参数（73）。→ parseCall 需识别"管道参数"。
+- **`\` 字符**（54）：verbatim 串里的反斜杠边界。→ lexer 边界 case。
+- **`has_all` 精确语义**：当前近似为 IN 超集，应改成 `X IN (...) AND X IN (...)` 重复。
+- **case-insensitive IN 精确化**：`in~` 应每元素 `COLLATE NOCASE`，当前近似为普通 IN。

@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe")
+| where FileName in~ ("cmd.exe", "powershell.exe", "wscript.exe", "cscript.exe", "mshta.exe", "regsvr32.exe")
+| project-reorder Timestamp, DeviceName, InitiatingProcessFileName, FileName, ProcessCommandLine

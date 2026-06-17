@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where FileName in~ ("procdump.exe", "procdump64.exe", "sqldumper.exe", "rundll32.exe", "comsvcs.dll")
+| where ProcessCommandLine has_any ("lsass", "Local Security Authority")
+| project-reorder Timestamp, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName

@@ -1,0 +1,18 @@
+let MaliciousHashes = dynamic([
+    "e99a18c428cb38d5f260853678922e03",
+    "098f6bcd4621d373cade4e832627b4f6",
+    "5d41402abc4b2a76b9719d911017c592"
+]);
+DeviceFileEvents
+| where TimeGenerated > ago(7d)
+| where ActionType in ("FileCreated", "FileModified")
+| where MD5 in (MaliciousHashes) or SHA256 in (MaliciousHashes)
+| summarize
+    EventCount = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Devices = make_set(DeviceName),
+    FilePaths = make_set(FolderPath)
+    by FileName, MD5, SHA256
+| extend DeviceCount = array_length(Devices)
+| order by DeviceCount desc, EventCount desc

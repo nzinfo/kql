@@ -1,0 +1,20 @@
+let TI = ThreatIntelligenceIndicator
+| where TimeGenerated > ago(30d)
+| where isnotempty(NetworkIP) or isnotempty(DomainName) or isnotempty(FileHashValue)
+| where ConfidenceScore > 50
+| extend IndicatorType = case(
+    isnotempty(NetworkIP), "IP",
+    isnotempty(DomainName), "Domain",
+    isnotempty(FileHashValue), "FileHash",
+    "Other")
+| project IndicatorValue = coalesce(NetworkIP, DomainName, FileHashValue), IndicatorType, ThreatType, ConfidenceScore;
+DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| join kind=inner (TI | where IndicatorType == "IP") on $left.RemoteIP == $right.IndicatorValue
+| summarize
+    HitCount = count(),
+    Devices = make_set(DeviceName, 20),
+    FirstHit = min(TimeGenerated),
+    LastHit = max(TimeGenerated)
+    by RemoteIP, ThreatType, ConfidenceScore
+| order by ConfidenceScore desc, HitCount desc

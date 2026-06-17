@@ -1,0 +1,17 @@
+let lookback = 14d;
+let timeframe = 1h;
+let scorethreshold = 5;
+let PersssssistAnomalyData = materialize (
+    DeviceNetworkEvents
+    | where TimeGenerated >= ago(lookback)
+    | where ActionType == "ConnectionSuccess"
+    | summarize TotalBytesSent = sum(SentBytes) by DestinationIP = RemoteIP, DestinationPort = RemotePort, bin(TimeGenerated, timeframe)
+    | summarize EventCount = make_list(TotalBytesSent), TimeList = make_list(TimeGenerated) by DestinationIP, DestinationPort
+    | extend outliers = series_decompose_anomalies(EventCount, scorethreshold)
+    | mv-expand TimeGenerated = TimeList, EventCount, outliers to typeof(double)
+    | where outliers > 0
+);
+PersssssistAnomalyData
+| summarize AnomalyHours = dcount(TimeGenerated), TotalBytes = sum(tolong(EventCount)) by DestinationIP, DestinationPort
+| where AnomalyHours > 5 and TotalBytes > 10000000
+| sort by TotalBytes desc

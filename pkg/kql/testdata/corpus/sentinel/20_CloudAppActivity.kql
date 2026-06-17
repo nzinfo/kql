@@ -1,0 +1,13 @@
+CloudAppEvents
+| where TimeGenerated > ago(24h)
+| where ActionType has_any ("FileDownloaded", "FileUploaded", "FileShared", "FileDeleted")
+| extend FileExtension = tostring(split(ObjectName, ".")[-1])
+| extend FileSize = tolong(RawEventData.file_size)
+| summarize
+    TotalActions = count(),
+    TotalSize = sum(FileSize),
+    UniqueFiles = dcount(ObjectName),
+    Actions = make_set(ActionType)
+    by AccountDisplayName, Application, FileExtension, bin(TimeGenerated, 1h)
+| where TotalActions > 50 or TotalSize > 100000000
+| order by TotalSize desc

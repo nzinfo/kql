@@ -1,0 +1,1 @@
+SecurityEvent | extend Parts = split(Account, "\\") | extend Domain = Parts[0], User = Parts[1]

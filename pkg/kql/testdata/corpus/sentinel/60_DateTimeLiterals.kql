@@ -1,0 +1,1 @@
+SecurityEvent | where TimeGenerated > datetime(2024-01-01) and TimeGenerated < datetime(2024-12-31T23:59:59Z)

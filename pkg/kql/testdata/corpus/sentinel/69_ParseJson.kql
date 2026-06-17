@@ -1,0 +1,1 @@
+AuditLogs | extend Props = parse_json(AdditionalDetails) | extend Key = tostring(Props[0].key)

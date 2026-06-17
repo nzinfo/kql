@@ -1,0 +1,17 @@
+let GetRiskLevel = (score: int) {
+    case(
+        score >= 90, "Critical",
+        score >= 70, "High",
+        score >= 50, "Medium",
+        score >= 30, "Low",
+        "Informational"
+    )
+};
+let TimeWindow = 7d;
+SecurityAlert
+| where TimeGenerated > ago(TimeWindow)
+| extend RiskScore = toint(ExtendedProperties.RiskScore)
+| extend RiskLevel = GetRiskLevel(RiskScore)
+| summarize AlertCount = count(), AvgRiskScore = avg(RiskScore) by RiskLevel, AlertName, ProductName
+| where AlertCount > 5
+| order by AvgRiskScore desc
