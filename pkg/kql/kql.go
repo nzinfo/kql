@@ -190,6 +190,65 @@ func isPgDSN(dsn string) bool {
 	return false
 }
 
+// OptimizationConfig controls the optimizer's cost-based decisions during
+// execution (not just explain). Pass a zero value for defaults (rules only,
+// no cost-based reorder). Set StatsPath + Policy to enable selectivity-aware
+// predicate ordering in the actual executed SQL.
+type OptimizationConfig struct {
+	StatsPath string // path to O0 stats YAML ("" = no catalog)
+	Policy    Policy // "" = no cost-based decision (rules only)
+}
+
+// ExecOptimized is like ExecOn but applies cost-based optimization (predicate
+// ordering via stats catalog + policy) BEFORE emit, so the executed SQL
+// benefits from selectivity-aware reordering. This is the production path for
+// performance-critical queries with a known stats catalog.
+func ExecOptimized(ctx context.Context, bk backend.Backend, query string, opt OptimizationConfig) (*Result, error) {
+	pipe, err := ParseTranslate(query)
+	if err != nil {
+		return nil, err
+	}
+	// Bind.
+	var diags diagnostic.List
+	if prov, ok := bk.(binderProvider); ok {
+		if _, berr := binder.Bind(pipe, prov, &diags); berr != nil {
+			return nil, fmt.Errorf("bind: %w", berr)
+		}
+		if diags.HasErrors() {
+			return nil, &Error{diags: diags, stage: "bind"}
+		}
+	}
+	// Load stats catalog if given.
+	var catalog *stats.Catalog
+	if opt.StatsPath != "" {
+		c, _, err := stats.Load(opt.StatsPath)
+		if err != nil {
+			return nil, fmt.Errorf("load stats %q: %w", opt.StatsPath, err)
+		}
+		catalog = c
+	}
+	// O2 rules.
+	defaultEngine.Optimize(pipe)
+	// O3 cost-based decision (opt-in).
+	if opt.Policy != "" {
+		est := cost.NewEstimator(catalog)
+		po := decision.PredicateOrder{Policy: policyFor(opt.Policy, catalog), Estimator: est}
+		if src, ok := pipe.Source.(*ir.SourceTable); ok {
+			po.Table = src.Table
+		}
+		po.Apply(pipe)
+	}
+	// Execute with PostProc support.
+	er, err := exec.ExecPipeline(ctx, bk, pipe)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{&backend.Result{
+		Columns: execColsToBackend(er.Columns),
+		Rows:    er.Rows,
+	}}, nil
+}
+
 // ExecOn runs a KQL query against an already-open backend. The caller owns the
 // backend's lifecycle. This is the backend-agnostic entry point; Exec is the
 // SQLite convenience wrapper.
@@ -250,6 +309,7 @@ var defaultEngine = rules.NewEngine(
 	rules.ConstantFold{},
 	rules.PredicatePushdown{},
 	rules.ColumnPrune{},
+	rules.PredicatePushdownUnion{},
 )
 
 // binderProvider is the optional interface a backend implements to enable

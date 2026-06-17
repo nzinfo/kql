@@ -305,6 +305,9 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 			// variadic coalesce
 			return fmt.Sprintf("coalesce(%s)", strings.Join(args, ", ")), nil
 		}
+		if spec.SQLite == "SUMIF" || spec.SQLite == "AVGIF" || spec.SQLite == "MAXIF" || spec.SQLite == "MINIF" {
+			return e.handleAggIf(spec.SQLite, args)
+		}
 		if spec.SQLite != "" {
 			return applySQLiteTemplate(spec.SQLite, args), nil
 		}
@@ -385,4 +388,26 @@ func castToSQL(t, arg string) (string, error) {
 		return fmt.Sprintf("CAST(%s AS INTEGER)", arg), nil
 	}
 	return fmt.Sprintf("CAST(%s AS TEXT)", arg), nil
+}
+
+// handleAggIf emits the SUMIF/AVGIF/MAXIF/MINIF sentinel templates with
+// correct argument order: KQL sumif(value, pred) → SQL CASE WHEN pred THEN value.
+func (e *emitter) handleAggIf(name string, args []string) (string, error) {
+	if len(args) < 2 {
+		return "", fmt.Errorf("%s needs 2 args", name)
+	}
+	value := args[0]
+	pred := args[1]
+	upper := strings.ToUpper(name)
+	switch upper {
+	case "SUMIF":
+		return fmt.Sprintf("SUM(CASE WHEN %s THEN %s ELSE 0 END)", pred, value), nil
+	case "AVGIF":
+		return fmt.Sprintf("AVG(CASE WHEN %s THEN %s ELSE NULL END)", pred, value), nil
+	case "MAXIF":
+		return fmt.Sprintf("MAX(CASE WHEN %s THEN %s ELSE NULL END)", pred, value), nil
+	case "MINIF":
+		return fmt.Sprintf("MIN(CASE WHEN %s THEN %s ELSE NULL END)", pred, value), nil
+	}
+	return fmt.Sprintf("%s(%s)", upper, strings.Join(args, ", ")), nil
 }
