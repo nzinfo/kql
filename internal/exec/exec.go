@@ -36,6 +36,19 @@ func ExecPipeline(ctx context.Context, bk backend.Backend, pipe *ir.Pipeline) (*
 	if pipe == nil {
 		return nil, fmt.Errorf("nil pipeline")
 	}
+	// O4: check for an IndexLookup-hinted join first (two-phase strategy).
+	// This runs BEFORE the normal path; if it applies, it returns early. If it
+	// can't apply (no keys extractable, too many keys), it falls back.
+	if findIndexLookupJoin(pipe.Stages) >= 0 {
+		res, applied, err := execIndexLookup(ctx, bk, pipe)
+		if err != nil {
+			return nil, err
+		}
+		if applied {
+			return res, nil
+		}
+		// Not applied → fall through to normal path.
+	}
 	splitIdx := findPostProcBoundary(pipe.Stages)
 	if splitIdx < 0 {
 		// No PostProc: emit the whole pipeline and execute directly.
