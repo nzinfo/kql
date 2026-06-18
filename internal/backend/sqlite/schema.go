@@ -17,6 +17,11 @@ import (
 //
 // If the table doesn't exist, returns an error so the binder can report it.
 func (b *Backend) Schema(table string) (*binder.Schema, error) {
+	// Check cache first.
+	cacheKey := strings.ToLower(table)
+	if cached, ok := b.schemaCache.Load(cacheKey); ok {
+		return cached.(*binder.Schema), nil
+	}
 	if b.db == nil {
 		return nil, fmt.Errorf("backend not open")
 	}
@@ -45,7 +50,9 @@ func (b *Backend) Schema(table string) (*binder.Schema, error) {
 	if cols == nil {
 		return nil, fmt.Errorf("table %q not found", table)
 	}
-	return &binder.Schema{Cols: cols}, nil
+	schema := &binder.Schema{Cols: cols}
+	b.schemaCache.Store(cacheKey, schema)
+	return schema, nil
 }
 
 // mapSQLType maps a SQLite type string to an ir.Type. SQLite's type affinity is

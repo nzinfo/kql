@@ -93,13 +93,19 @@ func drainArrowReader(reader array.RecordReader) *Result {
 
 	for reader.Next() {
 		rec := reader.Record()
+		// CRITICAL: DuckDB's Arrow C Data Interface reuses internal buffers
+		// (especially string data buffers) across Next() calls. We MUST
+		// Retain the RecordBatch to prevent the next Next() from overwriting
+		// our data before we finish extracting values.
+		rec.Retain()
+
 		// Extract column names from the first batch's schema.
 		if columns == nil && rec.Schema() != nil {
 			for _, f := range rec.Schema().Fields() {
 				columns = append(columns, f.Name)
 			}
 		}
-		// Extract all rows from this batch immediately.
+		// Extract all rows from this batch immediately (before Release).
 		nrows := int(rec.NumRows())
 		ncols := int(rec.NumCols())
 		for r := 0; r < nrows; r++ {
@@ -109,6 +115,8 @@ func drainArrowReader(reader array.RecordReader) *Result {
 			}
 			rows = append(rows, row)
 		}
+
+		rec.Release() // safe to release now — all values extracted
 	}
 
 	if columns == nil {

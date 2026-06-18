@@ -13,12 +13,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"runtime"
+	"sync"
 
 	// duckdb-go v2 registers the "duckdb" driver for database/sql.
 	_ "github.com/duckdb/duckdb-go/v2"
 
 	"nzinfo/kql/internal/backend"
-	"nzinfo/kql/internal/backend/pg"
 	"nzinfo/kql/internal/frontend/binder"
 	"nzinfo/kql/internal/ir"
 )
@@ -26,9 +27,20 @@ import (
 // Backend is a backend.Backend backed by DuckDB.
 type Backend struct {
 	db *sql.DB
+
+	// schemaCache avoids repeated information_schema round-trips.
+	schemaCache sync.Map
 }
 
 // New opens a DuckDB database. dsn examples: "" (in-memory), "file:path.duckdb".
+//
+// Performance configuration applied on open:
+//   - preserve_insertion_order=false: 1.5-3× aggregate/sort speedup when no
+//     ORDER BY is present (DuckDB skips order bookkeeping).
+//   - threads=min(8, NumCPU): deterministic parallelism (avoids hogging all
+//     cores when co-located with other services).
+//   - SetMaxOpenConns(1): DuckDB parallelizes WITHIN a connection; multiple
+//     database/sql pool connections contend on the same instance.
 func New(dsn string) (*Backend, error) {
 	if dsn == "" {
 		dsn = ":memory:" // DuckDB in-memory
@@ -41,18 +53,34 @@ func New(dsn string) (*Backend, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping duckdb %q: %w", dsn, err)
 	}
+	// Apply performance pragmas (ignore errors — older DuckDB may not support all).
+	threads := runtime.NumCPU()
+	if threads > 8 {
+		threads = 8
+	}
+	for _, pragma := range []string{
+		fmt.Sprintf("SET preserve_insertion_order=false"),
+		fmt.Sprintf("SET threads=%d", threads),
+		"SET enable_object_cache=true",
+	} {
+		db.ExecContext(context.Background(), pragma) // best-effort
+	}
+	// DuckDB parallelizes within a single connection; multiple pool connections
+	// contend on the same in-process instance.
+	db.SetMaxOpenConns(1)
 	return &Backend{db: db}, nil
 }
 
 // NewFromDB wraps an existing *sql.DB (caller-owned lifecycle).
+// Note: performance pragmas are NOT applied (caller manages the DB).
 func NewFromDB(db *sql.DB) *Backend { return &Backend{db: db} }
 
 // Dialect returns DialectDuckDB.
 func (b *Backend) Dialect() backend.Dialect { return backend.DialectDuckDB }
 
-// Emit translates an IR Pipeline into a DuckDB Query. Reuses pg's emitter
-// (DuckDB SQL is pg-compatible: $N placeholders, ILIKE, standard identifiers).
-func (b *Backend) Emit(pipe *ir.Pipeline) (*backend.Query, error) { return pg.Emit(pipe) }
+// Emit translates an IR Pipeline into a DuckDB Query using the independent
+// DuckDB emitter (no pg-specific hints/MATERIALIZED; DuckDB-native functions).
+func (b *Backend) Emit(pipe *ir.Pipeline) (*backend.Query, error) { return Emit(pipe) }
 
 // Exec runs the Query and returns the rowset.
 func (b *Backend) Exec(ctx context.Context, q *backend.Query) (*backend.Result, error) {

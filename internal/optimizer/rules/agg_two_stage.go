@@ -99,8 +99,12 @@ func allAssociative(aggs []*ir.NamedExpr) bool {
 			return false // non-call aggregate (e.g. bare column) — skip
 		}
 		switch strings.ToLower(fc.Name) {
-		case "count", "sum", "min", "max", "countif", "sumif", "dcount":
-			// Associative (dcount is approximately associative via HLL).
+		case "count", "sum", "min", "max", "countif", "sumif":
+			// Truly associative: partial = merge(partial1, partial2) exactly.
+			// NOTE: dcount is NOT included — HLL sketches from partial stages
+			// can't be merged by re-running dcount on the partial output (it
+			// would over-count distinct values across shards). dcount requires
+			// sketch-merging which the current emit path doesn't support.
 		default:
 			return false // avg, stdev, percentile, etc. — not associative
 		}

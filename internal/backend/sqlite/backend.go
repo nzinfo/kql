@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 
 	_ "modernc.org/sqlite" // register the "sqlite" driver
 
@@ -22,6 +23,9 @@ import (
 // Backend is a backend.Backend backed by a SQLite database.
 type Backend struct {
 	db *sql.DB
+
+	// schemaCache avoids repeated PRAGMA table_info round-trips.
+	schemaCache sync.Map
 }
 
 // New opens a SQLite database at dsn (e.g. "file:test.db" or ":memory:").

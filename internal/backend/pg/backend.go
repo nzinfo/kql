@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"strings"
 	"fmt"
+	"sync"
+	"time"
 
 	// pgx v5 stdlib adapter registers the "pgx" driver for database/sql.
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -17,6 +19,11 @@ import (
 // Backend is a backend.Backend backed by PostgreSQL via pgx.
 type Backend struct {
 	db *sql.DB
+
+	// schemaCache avoids repeated information_schema round-trips for the same
+	// table within a session. Schema is immutable during a session (DDL during
+	// query execution is not supported). Keyed by table name (lowercased).
+	schemaCache sync.Map
 }
 
 // New opens a PostgreSQL database. dsn is a pg connection string, e.g.
@@ -26,6 +33,11 @@ func New(dsn string) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open pg %q: %w", dsn, err)
 	}
+	// Production pool tuning: prevent connection exhaustion under concurrency.
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 	if err := db.PingContext(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping pg %q: %w", dsn, err)
@@ -58,9 +70,12 @@ func (b *Backend) Exec(ctx context.Context, q *backend.Query) (*backend.Result, 
 	for i, c := range cols {
 		result.Columns[i] = backend.ResultColumn{Name: c}
 	}
+	// Pre-allocate ptrs once (reused across rows; only values is fresh per row).
+	// Halves heap allocations for large result sets.
+	ncols := len(cols)
+	ptrs := make([]interface{}, ncols)
 	for rows.Next() {
-		values := make([]interface{}, len(cols))
-		ptrs := make([]interface{}, len(cols))
+		values := make([]interface{}, ncols)
 		for i := range values {
 			ptrs[i] = &values[i]
 		}
@@ -89,6 +104,11 @@ func (b *Backend) Close() error {
 // case-folding that ColID binding exists to fix). The binder resolves KQL
 // references case-insensitively against these physical names.
 func (b *Backend) Schema(table string) (*binder.Schema, error) {
+	// Check cache first — schema is immutable within a session.
+	cacheKey := strings.ToLower(table)
+	if cached, ok := b.schemaCache.Load(cacheKey); ok {
+		return cached.(*binder.Schema), nil
+	}
 	if b.db == nil {
 		return nil, fmt.Errorf("backend not open")
 	}
@@ -111,7 +131,9 @@ func (b *Backend) Schema(table string) (*binder.Schema, error) {
 	if cols == nil {
 		return nil, fmt.Errorf("table %q not found in schema %s", table, "current")
 	}
-	return &binder.Schema{Cols: cols}, nil
+	schema := &binder.Schema{Cols: cols}
+	b.schemaCache.Store(cacheKey, schema)
+	return schema, nil
 }
 
 // mapPgType maps a pg data_type string to an ir.Type.
