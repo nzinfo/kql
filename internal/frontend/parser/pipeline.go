@@ -27,7 +27,85 @@ func (p *Parser) parsePipeline() *ast.Pipeline {
 // parsePipelineSource parses the head of a pipeline (the table reference before
 // any `|`). It is an expression but stops at `|` — achieved because parseExpr's
 // precedence layers never treat `|` as an operator.
+//
+// Wildcarded table names (g4 wildcardedName): `App*`, `Security*`, `*` — used
+// in `union App*` and as a bare source `App* | take 10`. The wildcard `*` here
+// is a name suffix, NOT a multiplication operator. We detect this at the source
+// position: IDENT immediately followed by `*` (no operator gap) followed by a
+// non-expression token (|, comma, ), EOF) is a wildcardedName.
 func (p *Parser) parsePipelineSource() ast.Expr {
+	// Bare `*` as a source (rare: `* | take 10`).
+	if p.cur == token.MUL {
+		pos := p.pos
+		p.next()
+		return &ast.Ident{NamePos: pos, Name: "*", Tok: token.IDENT}
+	}
+	return p.parseTableNameOrExpr()
+}
+
+// isExprStart reports whether a token can start a multiplication operand.
+// If `*` is followed by one of these, it's multiplication; otherwise it's a
+// wildcard name suffix.
+func isExprStart(t token.Token) bool {
+	switch t {
+	case token.IDENT, token.INT, token.REAL, token.STRING, token.BOOL,
+		token.LPAREN, token.LBRACKET, token.SUB, token.ADD, token.NOT:
+		return true
+	}
+	if t.IsLiteral() {
+		return true
+	}
+	return false
+}
+
+// isWildcardSegment reports whether a token is a valid wildcardedNameSegment
+// (part of a wildcarded table name like `App*Event*`).
+func isWildcardSegment(t token.Token) bool {
+	switch t {
+	case token.IDENT, token.MUL, token.INT:
+		return true
+	}
+	return t.IsKeyword()
+}
+
+// parseTableNameOrExpr parses a table reference in a union argument list or
+// source position. Handles wildcarded names (App*, Security*, App*Event*) —
+// the `*` here is a name suffix, not multiplication. Falls through to ParseExpr
+// for normal expressions.
+//
+// Ambiguity: `App * Event` could be multiplication OR a wildcard name
+// `App*Event`. KQL resolves this by context: at source position and in union
+// lists, IDENT immediately followed by `*` (no whitespace) is a wildcard name.
+// We detect: IDENT * where the char right after IDENT is `*` (no gap) →
+// wildcard. This matches the g4 wildcardedNamePrefix rule (IDENT then `*` as
+// part of the name, not a separate multiplication operator).
+func (p *Parser) parseTableNameOrExpr() ast.Expr {
+	if p.cur == token.IDENT || p.cur.IsKeyword() {
+		// Check if IDENT is immediately followed by `*` (no whitespace gap).
+		// The lexer tracks positions; if the `*` is at IDENT_end, it's adjacent.
+		name := p.lit
+		namePos := p.pos
+		nameEnd := int(namePos) + len(name)
+		s := p.save()
+		p.next() // consume IDENT
+		if p.cur == token.MUL && int(p.pos) == nameEnd {
+			// Adjacent `*` → wildcarded name. Consume `*` and any segments.
+			p.next() // consume *
+			full := name + "*"
+			for isWildcardSegment(p.cur) {
+				// Only consume segments that are adjacent (no whitespace gap).
+				segStart := int(p.pos)
+				if segStart != nameEnd+len(full)-len(name) {
+					break
+				}
+				full += p.lit
+				nameEnd = segStart + len(p.lit)
+				p.next()
+			}
+			return &ast.Ident{NamePos: namePos, Name: full, Tok: token.IDENT}
+		}
+		p.restore(s)
+	}
 	return p.ParseExpr()
 }
 

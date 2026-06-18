@@ -14,9 +14,9 @@ func (p *Parser) parseUnionOp(pipePos token.Pos) *ast.UnionOp {
 	params := p.parseOperatorParams()
 	var tables []ast.Expr
 	if !atOperatorEnd(p.cur) {
-		tables = append(tables, p.ParseExpr())
+		tables = append(tables, p.parseTableNameOrExpr())
 		for p.accept(token.COMMA) {
-			tables = append(tables, p.ParseExpr())
+			tables = append(tables, p.parseTableNameOrExpr())
 		}
 	}
 	return &ast.UnionOp{Pipe: pipePos, Union: opPos, Params: params, Tables: tables}

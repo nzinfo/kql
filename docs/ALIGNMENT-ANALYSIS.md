@@ -76,23 +76,25 @@
     - `tryParamName` 误吞列名 `kind`（`where kind == "x"` 断）→ 只在紧跟 `=` 时认作参数名
     - binder `Project{Star}` 丢列（render/as/invoke/getschema/externaldata/mv-expand/parse 全受影响）→ Star 展开前传
 
-### ⚠️ 缺失但低频（0/90 语料）
-| 缺失 | g4 规则 | 真实频率 | 修复难度 |
-|---|---|---|---|
-| 通配符表名 `App*` | wildcardedName | 低中（union 常用） | 中 |
-| graph-* 算子（5个） | graphMatch/make-graph/... | 低（上升中） | 中（图模式语法） |
-| `restrict access`/`alias database`/`declare pattern` | 3 个语句 | 极低 | 低 |
-| `decimal(...)` 字面量 | DECIMALLITERAL | 极低 | 低（NOTES §3 已记） |
-| `.[]` legacy 路径元素 | legacyFunctionCallOrPath | 极低 | 低 |
+### ✅ Grammar 全覆盖（2026-06-17）
 
-> **2026-06-17 补齐**：`declare query_parameters`（declareQueryParametersStatement）+ Unicode 空白
-> （BOM/NBSP/全 g4 WHITESPACE 字符集）+ `:` 字符串操作符（stringBinaryOperation）已实现，
-> 不再列入缺失。
+**所有 g4 OPERATOR 规则（61/61）和 STATEMENT 规则（8/8）均有对应实现。**
+原列出的低频缺失项全部已处理（兼容）：
 
-### 最高价值修复优先级（Grammar 方向）
-1. **`mv-apply`** — 类似 mv-expand，已有基础设施（低难度）
-2. **通配符表名 `App*`** — union 常用（中难度）
-3. **`\| search`** — 特殊搜索语法（中难度）
+| 原缺失 | g4 规则 | 状态 |
+|---|---|---|
+| 通配符表名 `App*` | wildcardedName | ✅ 已实现（源位置 + union 参数的 IDENT* 邻接检测） |
+| graph-* 算子（5个） | graphMatch/make-graph/... | ✅ AST + parser（pass-through；真实语义需图引擎） |
+| `restrict access` | restrictAccessStatement | ✅ 已实现（解析 + 跳过，行级安全指令） |
+| `alias database` | aliasDatabaseStatement | ✅ 已实现（解析 + 跳过，数据库别名） |
+| `declare pattern` | declarePatternStatement | ✅ 已实现（parseDeclareStmt kind=pattern） |
+| `decimal(...)` | DECIMALLITERAL | ✅ 已兼容（decimal(0.1) 解析为函数调用） |
+| `.[]` legacy 路径 | legacyFunctionCallOrPath | ✅ 已兼容（arr[0] 数组索引已工作） |
+| `\| search` | searchOperator | ✅ 已实现（AST + parser） |
+| `mv-apply` | mvapplyOperator | ✅ 已实现（AST + parser + translate） |
+
+> **验证**：kqlparser grammar corpus 207/207 (100%)、kql-parser fuzz corpus 85/85 parse + 85/85
+> translate (100%)、Sentinel 语料 90/90 (100%)、g4 OPERATOR 61/61、STATEMENT 8/8。
 
 ## 三、建议的下一步优先级（综合 Phase + Grammar）
 
