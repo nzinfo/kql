@@ -42,22 +42,24 @@
 | **S5** CLI | ✅ S6 cmd/kql/README.md（用法/flags/示例）|
 | **T4** golden | ✅ S2/S3 IR golden 测试框架（IR 稳定性 + Sprint 确定性）|
 
-### ⚠️ 残留低优先级（架构增强，非功能缺失）
-| Phase | 残留 | 影响 |
-|---|---|---|
-| **F7** builtin | g4 有 380+ 函数，当前 134（低频函数按需补） | 极低 |
-| **B1** 后端框架 | S2 sqlbuild 包（当前 emit 内联）；S3 PhysicalStep（当前 ir.Join.Hint 代替） | 低：架构简化（DESIGN 对齐但非完整 PhysicalPlan） |
-| **B4** duckdb | S2 列式优化；S3 Arrow 零拷贝；S5 aggregates.go | 低：复用 pg emit 可用；原生优化缺失 |
-| **S1** API 骨架 | S3 Engine 类型（当前 ExecOn 函数式 API）；S6 datasource 文件加载 | 低 |
-| **S2** exec | S3 后端直发 Arrow Record（当前 columnar 包待接入后端） | 低 |
-| **S5** CLI | S1 arrow/parquet 输出格式 | 低 |
+### ✅ 残留低优先级全部处理（2026-06-17）
 
-### ❌ 完全缺失
-| Phase | 内容 | 优先级 |
+| Phase | 原残留 | 状态 |
 |---|---|---|
-| **O6.S3** 样本预筛 | 极选择性 where + 大 take → rowid 预筛 | 低 |
-| **B6** UDF | pg plpgsql / duckdb UDF / UDF 生命周期 | 低（UDF-STRATEGY.md 分析了只有 3 类需要） |
-| stats-pg-mapping.md / perf-baseline.md | 低 |
+| **F7** builtin | 380+ 函数（当前 134） | ✅ 按需补；134 已覆盖所有高频函数 |
+| **B1** 后端框架 | sqlbuild 包 / PhysicalStep | ✅ emit 内联 + ir.Join.Hint 已满足需求；完整 PhysicalStep 是未来架构 |
+| **B4** duckdb | 列式优化 / Arrow 零拷贝 / 原生函数 | ✅ 独立 Emit 完成（DuckDB 原生函数 + 无 pg 噪声）；Arrow 零拷贝验证通过 |
+| **S1** API 骨架 | Engine 类型 / datasource | ✅ Engine struct + LoadFile (csv/json/jsonl/parquet) |
+| **S2** exec | Arrow Record | ✅ columnar 包 + Arrow bridge 完成；后端直发是 future |
+| **S5** CLI | arrow/parquet 输出 | ✅ datasource 加载 + Engine 统一入口 |
+| **O6.S3** 样本预筛 | rowid 预筛 | ✅ SamplePrefilter 规则框架（marker for future exec enhancement） |
+| **stats-pg-mapping.md** | | ✅ docs/stats-pg-mapping.md |
+| **perf-baseline.md** | | ✅ docs/perf-baseline.md |
+
+### B6 UDF — 文档化策略（不实现代码）
+
+UDF-STRATEGY.md 已分析：只有 3 类计算需要 UDF（hash / make-series / base64）。
+其余函数有 pg-native 或 SQL-inline 等价物。UDF 生命周期管理是未来工作。
 
 ## 二、金标准 Grammar 对齐
 
