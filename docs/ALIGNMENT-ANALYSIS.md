@@ -55,7 +55,7 @@
 ### ❌ 完全缺失
 | Phase | 内容 | 优先级 |
 |---|---|---|
-| **O6** 高级规则 | ViewMatch/两阶段聚合/采样预过滤 | 中 |
+| **O6.S3** 样本预筛 | 极选择性 where + 大 take → rowid 预筛 | 低 |
 | **B6** UDF | pg plpgsql / duckdb UDF / UDF 生命周期 | 低（UDF-STRATEGY.md 分析了只有 3 类需要） |
 | stats-pg-mapping.md / perf-baseline.md | 低 |
 
@@ -129,6 +129,8 @@
 - ✅ **S2.S2 schema.go** — Schema/ColumnDesc 描述。
 - ✅ **S5.S6 README** — cmd/kql/README.md。
 - ✅ **T4.S2/S3 golden** — IR golden 测试框架。
+- ✅ **O6.S1 ViewMatch** — 当 catalog 有匹配的预计算 view 时，summarize 改写为读 view（skip base table scan）。
+- ✅ **O6.S2 两阶段聚合** — 大表（>100K行）+ 关联聚合（count/sum/min/max）自动 split 为 partial+final。
 - ✅ **金标准 Grammar 完全对齐** — 20 个 P2/P3 算子 AST+parser（print/range/find/sample/lookup/
   scan/fork/facet/reduce/top-hitters/partition/macro-expand/execute-and-cache/assert-schema/graph-*）
   + 通用 lparenStartsPipeline 修复（操作符形式子查询检测，side-effect-free lookahead）。

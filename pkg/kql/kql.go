@@ -131,6 +131,10 @@ func Explain(ctx context.Context, dsn, query string, policyName Policy, statsPat
 	if catalog != nil && len(catalog.Views) > 0 {
 		ruleSet = append(ruleSet, rules.ViewMatch{Catalog: catalog})
 	}
+	// O6.S2: Two-stage aggregation (large tables with associative aggregates).
+	if catalog != nil {
+		ruleSet = append(ruleSet, rules.TwoStageAgg{Catalog: catalog})
+	}
 	ruleEngine := rules.NewEngine(ruleSet...)
 	_, ruleChanges := ruleEngine.Optimize(pipe)
 	// O3 cost-based decision (opt-in via policyName).
