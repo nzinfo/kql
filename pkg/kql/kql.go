@@ -341,8 +341,15 @@ func ExecOnOpt(ctx context.Context, bk backend.Backend, query string, opt ExecOp
 		if sa, ok := bk.(interface{ SetCatalog(*stats.Catalog) }); ok {
 			sa.SetCatalog(catalog)
 		}
+		// Saturation rewrite (O6.S4): distinct elimination + not-null tautology
+		// folding. Runs with the catalog-backed stats reader.
+		ruleSet = append(ruleSet, rules.SaturationRewrite{})
 	}
-	rules.NewEngine(ruleSet...).Optimize(pipe)
+	engine := rules.NewEngine(ruleSet...)
+	if catalog != nil {
+		engine = engine.WithStats(rules.NewSaturationReader(catalog))
+	}
+	engine.Optimize(pipe)
 	// Cost-based decisions (opt-in).
 	if opt.Policy != "" && catalog != nil {
 		pol := policyFor(opt.Policy, catalog)

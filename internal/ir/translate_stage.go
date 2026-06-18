@@ -271,13 +271,21 @@ func (t *translator) translateUnion(n *ast.UnionOp) *Union {
 
 
 // translatePipelineExpr translates an ast.Expr that is expected to be a
-// sub-pipeline (used by mv-apply's ON clause). Returns nil if the expression
-// is not a pipeline (the executor then treats mv-apply as a passthrough).
+// sub-pipeline (used by mv-apply's ON clause). Recognizes ParenExpr{X: Pipeline}
+// (the parser's form for `( src | op | ... )`). Returns nil if the expression
+// is not a recognizable pipeline (the executor then treats mv-apply as a
+// passthrough / explode-only).
 func translatePipelineExpr(t *translator, e ast.Expr) *Pipeline {
 	if e == nil {
 		return nil
 	}
-	// The ON expression for mv-apply is a pipeline in expression position.
-	// We attempt to translate it; if it's not a recognizable pipeline, return nil.
-	return nil // TODO: full pipeline-lambda translation (placeholder safe)
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		if pipe, ok := x.X.(*ast.Pipeline); ok {
+			return t.translatePipeline(pipe)
+		}
+	case *ast.Pipeline:
+		return t.translatePipeline(x)
+	}
+	return nil
 }

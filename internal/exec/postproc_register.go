@@ -203,9 +203,19 @@ func execMvApply(res *Result, st interface{}) (*Result, error) {
 	if err != nil {
 		return res, err
 	}
-	// OnPipe application: feed each exploded row through the sub-pipeline.
-	// Without full pipeline-lambda execution, we pass the exploded result through
-	// (the OnPipe stages run via the PostProc follower mechanism if they're
-	// registered followers). This is the safe, correct-for-common-cases path.
+	// Apply the sub-pipeline's stages to the exploded rowset. Each stage is
+	// dispatched through the PostProc registry (follower executors). Stages
+	// without a registered executor are no-op pass-throughs.
+	if n.OnPipe != nil {
+		for _, sub := range n.OnPipe.Stages {
+			out, handled, err := dispatchPostProc(exploded, sub)
+			if err != nil {
+				return exploded, err
+			}
+			if handled {
+				exploded = out
+			}
+		}
+	}
 	return exploded, nil
 }
