@@ -449,6 +449,12 @@ func negatedOperatorLookup(keyword string) token.Token {
 		return token.NOTIN
 	case "in~":
 		return token.NOTINCI
+	// `!like` / `!likecs` — the `!`-prefixed negation of like operators.
+	// KQL also spells these as the single tokens `notlike` / `notlikecs`.
+	case "like":
+		return token.NOTLIKE
+	case "likecs":
+		return token.NOTLIKECS
 	default:
 		return token.ILLEGAL
 	}

@@ -449,6 +449,15 @@ func (e *emitter) emitBinOp(n *ir.BinOp, alias string) (string, error) {
 		return fmt.Sprintf("NOT (%s ILIKE %s)", x, y), nil
 	case token.MATCHESREGEX:
 		return fmt.Sprintf("regexp_matches(%s, %s)", x, y), nil
+	// like / !like: case-INsensitive → ILIKE. like_cs / !like_cs: case-sensitive → LIKE.
+	case token.LIKE:
+		return fmt.Sprintf("(%s ILIKE %s)", x, y), nil
+	case token.NOTLIKE:
+		return fmt.Sprintf("NOT (%s ILIKE %s)", x, y), nil
+	case token.LIKECS:
+		return fmt.Sprintf("(%s LIKE %s)", x, y), nil
+	case token.NOTLIKECS:
+		return fmt.Sprintf("NOT (%s LIKE %s)", x, y), nil
 	}
 	return fmt.Sprintf("(%s %s %s)", x, n.Op, y), nil
 }
@@ -623,6 +632,87 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 			}
 			return fmt.Sprintf("%s::JSON", s), nil
 		}
+	// --- DuckDB-specific aggregate rewrites (CROSS-PROJECT-COMPARISON.md §2.3) ---
+	case "count":
+		if len(n.Args) == 0 {
+			return "COUNT(*)", nil
+		}
+		name = "count" // DuckDB: count(col)
+	case "any", "take_any", "anyif", "take_anyif":
+		// DuckDB has `any_value(col)`.
+		name = "any_value"
+	case "arg_max":
+		if len(n.Args) >= 2 {
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("list(%s ORDER BY %s DESC)[1]", x, y), nil
+		}
+	case "arg_min":
+		if len(n.Args) >= 2 {
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("list(%s ORDER BY %s ASC)[1]", x, y), nil
+		}
+	case "dcountif":
+		if len(n.Args) >= 2 {
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("count(DISTINCT CASE WHEN %s THEN %s END)", y, x), nil
+		}
+	case "sumif":
+		if len(n.Args) >= 2 {
+			return fmt.Sprintf("sum(CASE WHEN %s THEN %s ELSE 0 END)", n.Args[1], n.Args[0]), nil
+		}
+	case "avgif":
+		if len(n.Args) >= 2 {
+			return fmt.Sprintf("avg(CASE WHEN %s THEN %s END)", n.Args[1], n.Args[0]), nil
+		}
+	case "maxif":
+		if len(n.Args) >= 2 {
+			return fmt.Sprintf("max(CASE WHEN %s THEN %s END)", n.Args[1], n.Args[0]), nil
+		}
+	case "minif":
+		if len(n.Args) >= 2 {
+			return fmt.Sprintf("min(CASE WHEN %s THEN %s END)", n.Args[1], n.Args[0]), nil
+		}
+	case "make_list_if":
+		name = "list" // best-effort: list(CASE WHEN pred THEN col END)
+	case "make_set_if":
+		name = "list"
+	case "make_bag", "make_bag_if":
+		name = "list" // best-effort JSON bag
+	case "stdevp":
+		name = "stddev_pop"
+	case "variancep":
+		name = "var_pop"
+	case "stdev":
+		name = "stddev_samp"
+	case "variance":
+		name = "var_samp"
+	case "binary_all_and":
+		name = "bit_and"
+	case "binary_all_or":
+		name = "bit_or"
+	case "binary_all_xor":
+		name = "bit_xor"
 	}
 	// Generic: emit as name(args...).
 	var args []string

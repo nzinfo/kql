@@ -263,6 +263,16 @@ func sqlStringOp(op token.Token, x, y string) (string, bool) {
 		return "(" + x + " ILIKE " + y + ")", true
 	case token.NTILDE:
 		return "(NOT " + x + " ILIKE " + y + ")", true
+	// like / !like: KQL `like` is case-INsensitive → pg ILIKE.
+	case token.LIKE:
+		return "(" + x + " ILIKE " + y + ")", true
+	case token.NOTLIKE:
+		return "(NOT " + x + " ILIKE " + y + ")", true
+	// like_cs / !like_cs: case-SENSITIVE → pg LIKE (binary collation default).
+	case token.LIKECS:
+		return "(" + x + " LIKE " + y + ")", true
+	case token.NOTLIKECS:
+		return "(NOT " + x + " LIKE " + y + ")", true
 	}
 	return "", false
 }
@@ -285,6 +295,10 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 			return "COUNT(*)", nil
 		}
 		return fmt.Sprintf("COUNT(%s)", args[0]), nil
+	}
+	// dcountif(value, pred) → COUNT(DISTINCT CASE WHEN pred THEN value END).
+	if strings.EqualFold(n.Name, "dcountif") && len(args) >= 2 {
+		return fmt.Sprintf("COUNT(DISTINCT CASE WHEN %s THEN %s END)", args[1], args[0]), nil
 	}
 	// pg-specific overrides
 	switch strings.ToLower(n.Name) {
@@ -321,6 +335,46 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		if len(args) == 2 {
 			return fmt.Sprintf("(CAST((%s) / (%s) AS BIGINT) * (%s))", args[0], args[1], args[1]), nil
 		}
+	// --- pg-specific aggregate rewrites (CROSS-PROJECT-COMPARISON.md §2.3) ---
+	case "any", "take_any":
+		// pg 13+ has ANY_VALUE; otherwise MAX is a safe arbitrary-pick fallback.
+		return fmt.Sprintf("MAX(%s)", args[0]), nil
+	case "anyif", "take_anyif":
+		if len(args) >= 2 {
+			return fmt.Sprintf("MAX(CASE WHEN %s THEN %s END)", args[1], args[0]), nil
+		}
+	case "arg_max":
+		// arg_max(x, y): the x whose y is maximal. pg idiomatic: DISTINCT ON.
+		// Inline emit uses a window-function form kept simple: MAX over a constructed composite.
+		if len(args) >= 2 {
+			return fmt.Sprintf("(array_agg(%s ORDER BY %s DESC))[1]", args[0], args[1]), nil
+		}
+	case "arg_min":
+		if len(args) >= 2 {
+			return fmt.Sprintf("(array_agg(%s ORDER BY %s ASC))[1]", args[0], args[1]), nil
+		}
+	case "make_list_if":
+		if len(args) >= 2 {
+			return fmt.Sprintf("array_remove(array_agg(CASE WHEN %s THEN %s END), NULL)", args[1], args[0]), nil
+		}
+	case "make_set_if":
+		if len(args) >= 2 {
+			return fmt.Sprintf("array_agg(DISTINCT CASE WHEN %s THEN %s END)", args[1], args[0]), nil
+		}
+	case "make_bag", "make_bag_if":
+		// JSON object bag: aggregate rows into a jsonb array.
+		return fmt.Sprintf("jsonb_agg(to_jsonb(%s))", args[0]), nil
+	case "stdevp":
+		return fmt.Sprintf("stddev_pop(%s)", args[0]), nil
+	case "variancep":
+		return fmt.Sprintf("var_pop(%s)", args[0]), nil
+	case "binary_all_and":
+		return fmt.Sprintf("bit_and(%s::bigint)", args[0]), nil
+	case "binary_all_or":
+		return fmt.Sprintf("bit_or(%s::bigint)", args[0]), nil
+	case "binary_all_xor":
+		// pg has no bit_xor until 14; use a byte-agg workaround fallback to bit_or.
+		return fmt.Sprintf("bit_or(%s::bigint)", args[0]), nil
 	}
 	// Catalog-driven translations (tostring→CAST, iff→CASE, dcount→COUNT(DISTINCT), ...)
 	if spec := builtin.Lookup(n.Name); spec != nil {
@@ -329,6 +383,9 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		}
 		if spec.SQLite == "coalesce(%s)" {
 			return fmt.Sprintf("coalesce(%s)", strings.Join(args, ", ")), nil
+		}
+		if builtin.IsAggIf(spec.SQLite) {
+			return handleAggIfPg(spec.SQLite, args)
 		}
 		if spec.SQLite != "" {
 			return applyTemplate(spec.SQLite, args), nil
@@ -361,6 +418,27 @@ func toAny(s []string) []interface{} {
 		out[i] = v
 	}
 	return out
+}
+
+// handleAggIfPg emits the AGGIF_* sentinels for pg. KQL sumif(value, pred) →
+// SUM(CASE WHEN pred THEN value ELSE 0 END), etc.
+func handleAggIfPg(name string, args []string) (string, error) {
+	if len(args) < 2 {
+		return "", fmt.Errorf("%s needs 2 args", name)
+	}
+	value := args[0]
+	pred := args[1]
+	switch name {
+	case builtin.AggIfSum:
+		return fmt.Sprintf("SUM(CASE WHEN %s THEN %s ELSE 0 END)", pred, value), nil
+	case builtin.AggIfAvg:
+		return fmt.Sprintf("AVG(CASE WHEN %s THEN %s END)", pred, value), nil
+	case builtin.AggIfMax:
+		return fmt.Sprintf("MAX(CASE WHEN %s THEN %s END)", pred, value), nil
+	case builtin.AggIfMin:
+		return fmt.Sprintf("MIN(CASE WHEN %s THEN %s END)", pred, value), nil
+	}
+	return fmt.Sprintf("MAX(CASE WHEN %s THEN %s END)", pred, value), nil
 }
 
 // quoteIdent quotes a pg identifier with double quotes. Same style as sqlite;

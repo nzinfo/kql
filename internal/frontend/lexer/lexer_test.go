@@ -120,6 +120,12 @@ func TestNegatedOperators(t *testing.T) {
 		"!in":         token.NOTIN,
 		"!in~":        token.NOTINCI,
 		"!has_cs":     token.NOTHASCS,
+		"!like":       token.NOTLIKE,
+		"!likecs":     token.NOTLIKECS,
+		"like":        token.LIKE,
+		"likecs":      token.LIKECS,
+		"notlike":     token.NOTLIKE,
+		"notlikecs":   token.NOTLIKECS,
 	}
 	for lit, want := range cases {
 		toks := scanAll(t, lit)

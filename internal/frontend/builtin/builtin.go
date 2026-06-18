@@ -240,3 +240,85 @@ func init() {
 		catalog[normalize(s.Name)] = s
 	}
 }
+
+// AggIf sentinel templates. KQL's *if(value, pred) family maps to
+// AGG(CASE WHEN pred THEN value ...). Each backend recognizes its own prefix
+// (sqlite uses these names directly; pg/duckdb consult handleAggIf). See
+// AGGIF_* constants below.
+const (
+	AggIfSum = "AGGIF_SUM" // sumif(value, pred)
+	AggIfAvg = "AGGIF_AVG" // avgif(value, pred)
+	AggIfMax = "AGGIF_MAX" // maxif(value, pred)
+	AggIfMin = "AGGIF_MIN" // minif(value, pred)
+)
+
+// IsAggIf reports whether a catalog SQLite template is one of the AGGIF_*
+// sentinels (so emitters can route to the CASE-WHEN form rather than passing
+// the literal token through).
+func IsAggIf(tpl string) bool {
+	switch tpl {
+	case AggIfSum, AggIfAvg, AggIfMax, AggIfMin:
+		return true
+	}
+	return false
+}
+
+func init() {
+	// Round 3 (CROSS-PROJECT-COMPARISON.md §2.3): the 24 aggregates that
+	// kqlparser registers but we previously lacked, plus fixes so the
+	// sumif/avgif/maxif/minif sentinels are uniform across backends. Templates
+	// are best-effort SQLite forms; NeedsPostProc marks the rest.
+	adds := []Spec{
+		// --- *if aggregate family: switch to uniform AGGIF_ sentinels ---
+		{Name: "sumif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: AggIfSum},
+		{Name: "avgif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: AggIfAvg},
+		{Name: "maxif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: AggIfMax},
+		{Name: "minif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: AggIfMin},
+
+		// --- any / take_any family (pick an arbitrary row's value) ---
+		{Name: "any", MinArgs: 1, MaxArgs: -1, IsAggregate: true, SQLite: "MAX(%s)"},           // sqlite lacks ANY_VALUE; MAX is a safe arbitrary pick for scalars
+		{Name: "anyif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: AggIfMax},            // arbitrary value with predicate
+		{Name: "take_any", MinArgs: 1, MaxArgs: -1, IsAggregate: true, SQLite: "MAX(%s)"},       // alias of any
+		{Name: "take_anyif", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: AggIfMax},       // alias of anyif
+
+		// --- arg_max / arg_min (extremum by an ordering column) ---
+		// SQLite/SQL have no direct form; use NeedsPostProc sentinel handled by emitter.
+		{Name: "arg_max", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "ARGMAX(%s, %s)"},
+		{Name: "arg_min", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "ARGMIN(%s, %s)"},
+
+		// --- count (no-arg) and dcountif ---
+		{Name: "count", MinArgs: 0, MaxArgs: 1, IsAggregate: true, SQLite: "COUNT(%s)"},         // count() special-cased to COUNT(*) in emitters
+		{Name: "dcountif", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "COUNT(DISTINCT CASE WHEN %s THEN %s END)"},
+
+		// --- *_if list/set builders ---
+		{Name: "make_list_if", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "group_concat(CASE WHEN %s THEN %s END)"},
+		{Name: "make_set_if", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "group_concat(DISTINCT CASE WHEN %s THEN %s END)"},
+
+		// --- bag (JSON object) aggregations: need JSON aggregation ---
+		{Name: "make_bag", MinArgs: 1, MaxArgs: 2, IsAggregate: true, NeedsPostProc: true},
+		{Name: "make_bag_if", MinArgs: 2, MaxArgs: 3, IsAggregate: true, NeedsPostProc: true},
+
+		// --- population statistics ---
+		{Name: "stdevp", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},        // sqlite lacks; pg has STDDEV_POP
+		{Name: "variancep", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},      // sqlite lacks; pg has VAR_POP
+
+		// --- binary aggregate reducers ---
+		{Name: "binary_all_and", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},
+		{Name: "binary_all_or", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},
+		{Name: "binary_all_xor", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},
+
+		// --- plural percentile forms ---
+		{Name: "percentiles", MinArgs: 2, MaxArgs: -1, IsAggregate: true, NeedsPostProc: true},
+		{Name: "percentiles_array", MinArgs: 2, MaxArgs: -1, IsAggregate: true, NeedsPostProc: true},
+
+		// --- schema / sketches (no portable SQL form) ---
+		{Name: "buildschema", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},
+		{Name: "hll", MinArgs: 1, MaxArgs: 2, IsAggregate: true, NeedsPostProc: true},
+		{Name: "hll_merge", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},
+		{Name: "tdigest", MinArgs: 2, MaxArgs: 2, IsAggregate: true, NeedsPostProc: true},
+		{Name: "tdigest_merge", MinArgs: 1, MaxArgs: 1, IsAggregate: true, NeedsPostProc: true},
+	}
+	for _, s := range adds {
+		catalog[normalize(s.Name)] = s
+	}
+}
