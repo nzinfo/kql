@@ -116,9 +116,17 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		*ast.GraphToTableOp, *ast.GraphMarkComponentsOp:
 		return t.translatePassthrough(n.Pos())
 	case *ast.MakeSeriesOp:
-		// make-series: time-series aggregation. Complex (needs binning + series
-		// fill); emit pass-through for the minimal loop.
-		return t.translatePassthrough(n.Pos())
+		// make-series: time-series aggregation. Emit a MakeSeries IR stage
+		// (PostProc — client-side bin + series fill).
+		return &MakeSeries{
+			Position:   n.Pos(),
+			Aggregates: t.translateNamedList(n.Aggregates),
+			On:         t.translateExpr(n.OnExpr),
+			From:       t.translateOptExpr(n.From),
+			To:         t.translateOptExpr(n.To),
+			Step:       t.translateOptExpr(n.Step),
+			ByKeys:     t.translateNamedList(n.ByKeys),
+		}
 	case *ast.ParseOp:
 		// parse [Kind] Target with Pattern: regex/string extraction into new
 		// columns. Emit a real Parse IR stage (PostProc — client-side regex).
@@ -153,6 +161,14 @@ func (t *translator) translatePassthrough(pos token.Pos) Stage {
 }
 
 // translateNamedList converts a slice of AST NamedExpr to IR NamedExpr.
+// translateOptExpr translates an optional AST expression (nil → nil).
+func (t *translator) translateOptExpr(e ast.Expr) Expr {
+	if e == nil {
+		return nil
+	}
+	return t.translateExpr(e)
+}
+
 func (t *translator) translateNamedList(in []*ast.NamedExpr) []*NamedExpr {
 	out := make([]*NamedExpr, len(in))
 	for i, n := range in {

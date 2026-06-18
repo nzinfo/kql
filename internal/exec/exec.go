@@ -104,64 +104,29 @@ func ExecPipeline(ctx context.Context, bk backend.Backend, pipe *ir.Pipeline) (*
 	return result, nil
 }
 
-// findPostProcBoundary returns the index of the first PostProc stage, or -1
-// if none. mv-expand is the first implemented PostProc operator.
+// findPostProcBoundary returns the index of the first PostProc boundary stage,
+// or -1 if none. Registry-driven (no type switch) — see postproc.go.
 func findPostProcBoundary(stages []ir.Stage) int {
 	for i, st := range stages {
-		if isPostProc(st) {
+		if isPostProcBoundary(st) {
 			return i
 		}
 	}
 	return -1
 }
 
-// isPostProc reports whether a stage requires client-side processing.
-func isPostProc(st ir.Stage) bool {
-	switch st.(type) {
-	case *ir.MvExpand, *ir.Parse:
-		return true // dedicated PostProc IR stages (mv-expand, parse/parse-where)
-	}
-	return false
-}
-
-// applyPostProc runs one stage client-side on the current result set.
+// applyPostProc runs one stage client-side on the current result set via the
+// executor registry (postproc.go). Returns the (possibly transformed) result.
+// Stages with no registered executor are no-op pass-throughs.
 func applyPostProc(res *Result, st ir.Stage) (*Result, error) {
-	switch n := st.(type) {
-	case *ir.MvExpand:
-		// mv-expand: explode the SOURCE array column. Source is typically a bare
-		// *ir.Col naming the array; ColName is the optional output rename.
-		srcCol := n.ColName
-		if c, ok := n.Source.(*ir.Col); ok && c.Name != "" {
-			srcCol = c.Name
-		}
-		outCol := n.ColName
-		if outCol == "" {
-			outCol = srcCol
-		}
-		return mvExpandRows(res, srcCol, outCol)
-	case *ir.Parse:
-		targetCol := ""
-		if c, ok := n.Target.(*ir.Col); ok {
-			targetCol = c.Name
-		}
-		return parseRows(res, &ParseSpec{
-			TargetCol: targetCol,
-			Pattern:   n.Pattern,
-			IsWhere:   n.IsWhere,
-		})
-	case *ir.Aggregate:
-		return aggregateRowsClient(res, n)
-	case *ir.Limit:
-		return limitRowsClient(res, n)
-	case *ir.Sort:
-		// Client-side sort is a no-op here (order preserved from input); a full
-		// client sort would need a comparator. Keep row order as-is.
-		return res, nil
-	case *ir.Project:
-		// Client-side projection: select/rename columns by name.
-		return projectRowsClient(res, n)
+	out, handled, err := dispatchPostProc(res, st)
+	if err != nil {
+		return res, err
 	}
-	return res, nil
+	if !handled {
+		return res, nil // no executor registered → pass-through
+	}
+	return out, nil
 }
 
 // backendResultToExec converts a backend.Result to an exec.Result.

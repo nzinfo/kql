@@ -120,3 +120,55 @@ func TestPostProc_ParseWhere(t *testing.T) {
 		t.Errorf("parse-where rows = %d, want 1 (only the matching row)", got)
 	}
 }
+
+// TestPostProc_MakeSeries: time-series bucketing with sum aggregation.
+func TestPostProc_MakeSeries(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	db.Exec(`CREATE TABLE t (ts INTEGER, grp TEXT, val INTEGER)`)
+	// Group A: ts 0,5,15 → buckets [0,10)→2, [10,20)→1
+	// Group B: ts 5 → bucket [0,10)→1
+	db.Exec(`INSERT INTO t VALUES (0,'A',10),(5,'A',20),(15,'A',30),(5,'B',40)`)
+
+	bk := sqlite.NewFromDB(db)
+	res, err := kql.ExecOn(context.Background(), bk,
+		`t | make-series s = sum(val) on ts from 0 to 20 step 10 by grp`)
+	if err != nil {
+		t.Fatalf("make-series: %v", err)
+	}
+	// Expect 3 buckets: A@0(sum=30), A@10(sum=30), B@0(sum=40).
+	if got := len(res.Rows()); got != 3 {
+		t.Errorf("make-series rows = %d, want 3 (A@0, A@10, B@0); rows=%v", got, res.Rows())
+	}
+}
+
+// TestPostProc_RegistryGeneralization proves the registry dispatches without
+// a type switch: mv-expand, parse, and make-series all route through the same
+// dispatchPostProc path. This test just verifies they all execute (the per-
+// operator correctness is covered by the tests above).
+func TestPostProc_RegistryGeneralization(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	db.Exec(`CREATE TABLE t (ts INTEGER, tags TEXT, line TEXT)`)
+	db.Exec(`INSERT INTO t VALUES (1,'["a","b"]','<T>x</T>')`)
+	bk := sqlite.NewFromDB(db)
+
+	// Each of these enters the PostProc region via a different boundary stage,
+	// all dispatched by the registry (no type switch in the engine).
+	for _, q := range []string{
+		`t | mv-expand tag = tags`,
+		`t | parse line with '<T>' T '</T>'`,
+		`t | make-series c = count() on ts from 0 to 10 step 5`,
+	} {
+		_, err := kql.ExecOn(context.Background(), bk, q)
+		if err != nil {
+			t.Errorf("registry dispatch %q: %v", q, err)
+		}
+	}
+}

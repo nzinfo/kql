@@ -221,3 +221,22 @@ func (*MvExpand) node()  {}
 func (*MvExpand) stage() {}
 func (*Parse) node()     {}
 func (*Parse) stage()    {}
+
+// MakeSeries is `| make-series <agg> on <timeCol> from <start> to <end> step <step> by <keys>`
+// — time-series aggregation with bucket filling. A PostProc stage: executed
+// client-side (the series fill requires producing zero/null rows for empty
+// buckets, which no SQL backend does natively without a generate_series join).
+type MakeSeries struct {
+	Position   token.Pos
+	Aggregates []*NamedExpr // series aggregates (e.g. sum(x), avg(y))
+	On         Expr         // time axis expression (typically a column)
+	From       Expr         // start bound (nil if omitted)
+	To         Expr         // end bound (nil if omitted)
+	Step       Expr         // bucket size (nil if omitted)
+	ByKeys     []*NamedExpr // group-by keys (may be empty)
+}
+
+func (s *MakeSeries) Pos() token.Pos { return s.Position }
+
+func (*MakeSeries) node()  {}
+func (*MakeSeries) stage() {}
