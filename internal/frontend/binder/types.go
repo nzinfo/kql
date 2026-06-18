@@ -21,6 +21,7 @@
 package binder
 
 import (
+	"nzinfo/kql/internal/frontend/builtin"
 	"nzinfo/kql/internal/frontend/diagnostic"
 	"nzinfo/kql/internal/frontend/token"
 	"nzinfo/kql/internal/ir"
@@ -178,6 +179,12 @@ func inferCaseType(n *ir.Case) ir.Type {
 // inferFuncType returns the result type for known builtin functions. Unknown
 // functions (or those without return-type metadata) get TypeUnknown.
 func inferFuncType(n *ir.FuncCall) ir.Type {
+	// First consult the richer Signature table (62 functions with ReturnType).
+	if sig := builtin.LookupSignature(n.Name); sig != nil && sig.ReturnType != ir.TypeUnknown {
+		return sig.ReturnType
+	}
+	// Fall back to the hardcoded switch (covers a few dynamic-return functions
+	// like aggregates that depend on their arg type).
 	switch n.Name {
 	case "count", "countif", "dcount", "dcountif":
 		return ir.TypeLong
@@ -283,7 +290,8 @@ func isStringOp(op token.Token) bool {
 	case token.HAS, token.NOTHAS, token.CONTAINS, token.NOTCONTAINS,
 		token.STARTSWITH, token.NOTSTARTSWITH, token.ENDSWITH, token.NOTENDSWITH,
 		token.HASPREFIX, token.NOTHASPREFIX, token.HASSUFFIX, token.NOTHASSUFFIX,
-		token.HASANY, token.HASALL:
+		token.HASANY, token.HASALL,
+		token.LIKE, token.NOTLIKE, token.LIKECS, token.NOTLIKECS, token.MATCHESREGEX:
 		return true
 	}
 	return false

@@ -540,6 +540,53 @@ func TestInfer_FuncReturnTypes(t *testing.T) {
 	}
 }
 
+// TestInfer_FuncReturnTypes_SigTable verifies functions typed via the Signature
+// table (F5.S4 enhancement: inferFuncType now consults builtin.LookupSignature).
+func TestInfer_FuncReturnTypes_SigTable(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "x", Type: ir.TypeLong},
+		{ColID: 2, PhysicalName: "s", Type: ir.TypeString},
+	}
+	cases := []struct {
+		name string
+		args []ir.Expr
+		want ir.Type
+	}{
+		// Functions whose ReturnType comes from the Signature table, not the
+		// hardcoded inferFuncType switch.
+		// Expectations match the authoritative Signature table values.
+		{"toint", []ir.Expr{col("x")}, ir.TypeInt},
+		{"substring", []ir.Expr{col("s"), col("x")}, ir.TypeString},
+		{"toreal", []ir.Expr{col("x")}, ir.TypeReal},
+		{"split", []ir.Expr{col("s"), col("s")}, ir.TypeDynamic}, // returns a dynamic array
+		{"sign", []ir.Expr{col("x")}, ir.TypeInt},                // -1/0/1
+		{"hash_sha256", []ir.Expr{col("s")}, ir.TypeString},
+	}
+	for _, c := range cases {
+		fc := &ir.FuncCall{Name: c.name, Args: c.args}
+		got := inferType(t, fc, schema)
+		if got != c.want {
+			t.Errorf("%s(): got %v, want %v (Signature-table inference)", c.name, got, c.want)
+		}
+	}
+}
+
+// TestInfer_LikeOperator_Bool verifies like/!like/like_cs/!like_cs return bool
+// (added to isStringOp in the type-flow enhancement).
+func TestInfer_LikeOperator_Bool(t *testing.T) {
+	schema := []ColBinding{
+		{ColID: 1, PhysicalName: "s", Type: ir.TypeString},
+	}
+	ops := []token.Token{token.LIKE, token.NOTLIKE, token.LIKECS, token.NOTLIKECS, token.MATCHESREGEX}
+	for _, op := range ops {
+		expr := &ir.BinOp{Op: op, X: col("s"), Y: &ir.Lit{T: ir.TypeString, Value: "a%"}}
+		got := inferType(t, expr, schema)
+		if got != ir.TypeBool {
+			t.Errorf("%s: got %v, want Bool", op, got)
+		}
+	}
+}
+
 // TestInfer_UnaryPreservesType: unary +/- preserves the numeric type.
 func TestInfer_UnaryPreservesType(t *testing.T) {
 	schema := []ColBinding{{ColID: 1, PhysicalName: "x", Type: ir.TypeReal}}
