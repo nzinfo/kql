@@ -61,6 +61,8 @@ func (p *Parser) parsePipedOperator() ast.Operator {
 	// P1 operators
 	case token.MVEXPAND:
 		return p.parseMvExpandOp(pipePos)
+	case token.MVAPPLY:
+		return p.parseMvApplyOp(pipePos)
 	case token.MAKESERIES:
 		return p.parseMakeSeriesOp(pipePos)
 	case token.PARSE:

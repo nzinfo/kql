@@ -94,6 +94,11 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		// pass-through with a NOTE marker — real impl uses a lateral join /
 		// UNNEST in the backend (NeedsPostProc for sqlite).
 		return t.translatePassthrough(n.Pos())
+	case *ast.MvApplyOp:
+		// mv-apply: apply a sub-query to each array element. Even more complex
+		// than mv-expand (needs a correlated lateral subquery or client-side
+		// iteration). Pass-through for now.
+		return t.translatePassthrough(n.Pos())
 	case *ast.MakeSeriesOp:
 		// make-series: time-series aggregation. Complex (needs binning + series
 		// fill); emit pass-through for the minimal loop.

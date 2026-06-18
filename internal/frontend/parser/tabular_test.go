@@ -589,3 +589,33 @@ func TestColonStringOperatorEmit(t *testing.T) {
 		t.Errorf("translated Op = %v, want TILDE (normalized from COLON)", bin.Op)
 	}
 }
+
+
+// TestMvApplyOp parses `| mv-apply Col = Expr [limit N] ON (SubQuery)`.
+func TestMvApplyOp(t *testing.T) {
+	pipe := parsePipelineStr(t, `T | mv-apply Col = arr limit 10 ON (Col * 2)`)
+	if len(pipe.Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(pipe.Ops))
+	}
+	mv, ok := pipe.Ops[0].(*ast.MvApplyOp)
+	if !ok {
+		t.Fatalf("op0 = %T, want *MvApplyOp", pipe.Ops[0])
+	}
+	if len(mv.Cols) != 1 {
+		t.Errorf("Cols = %d, want 1", len(mv.Cols))
+	}
+	if mv.OnExpr == nil {
+		t.Error("OnExpr nil, want non-nil")
+	}
+}
+
+// TestMvApplyOpSimple: minimal `| mv-apply Col = arr` (no limit/on).
+func TestMvApplyOpSimple(t *testing.T) {
+	pipe := parsePipelineStr(t, `T | mv-apply Col = arr`)
+	if len(pipe.Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(pipe.Ops))
+	}
+	if _, ok := pipe.Ops[0].(*ast.MvApplyOp); !ok {
+		t.Fatalf("op0 = %T, want *MvApplyOp", pipe.Ops[0])
+	}
+}

@@ -50,6 +50,38 @@ func (x *MvExpandOp) End() token.Pos {
 	return token.Pos(int(x.MvExp) + len("mv-expand"))
 }
 
+// MvApplyOp is `| mv-apply Col [to typeof(T)], ... [limit N] [id GUID] ON (SubQuery)`
+// (g4 mvapplyOperator). It applies a sub-query to each element of an array
+// column — more powerful than mv-expand. For the minimal loop we parse the
+// expressions, limit, id, and ON sub-query; translate as a pass-through
+// (real semantics need client-side PostProc or a lateral join — deferred).
+type MvApplyOp struct {
+	Pipe   token.Pos
+	MvApply token.Pos
+	Cols   []*NamedExpr // expanded column expressions
+	Limit  Expr         // optional limit N (nil if absent)
+	IdGUID string       // optional id GUID (empty if absent)
+	OnPos  token.Pos    // position of ON
+	OnExpr Expr         // the ON (subquery) expression
+}
+
+// Pos returns the position of |.
+func (x *MvApplyOp) Pos() token.Pos { return x.Pipe }
+
+// End returns one past the ON expression (or the last column).
+func (x *MvApplyOp) End() token.Pos {
+	if x.OnExpr != nil {
+		return x.OnExpr.End()
+	}
+	if x.Limit != nil {
+		return x.Limit.End()
+	}
+	if len(x.Cols) > 0 {
+		return x.Cols[len(x.Cols)-1].End()
+	}
+	return token.Pos(int(x.MvApply) + len("mv-apply"))
+}
+
 // MakeSeriesOp is `| make-series <aggs> on <col> [from/to/step|in range(...)] [by ...]`.
 // Complex; minimal capture keeps the aggregation list + on column + by keys.
 type MakeSeriesOp struct {
@@ -185,6 +217,9 @@ func (*ParseOp) node()        {}
 func (*ParseOp) operator()    {}
 func (*MvExpandOp) node()     {}
 func (*MvExpandOp) operator() {}
+
+func (*MvApplyOp) node()     {}
+func (*MvApplyOp) operator() {}
 func (*MakeSeriesOp) node()   {}
 func (*MakeSeriesOp) operator() {}
 func (*RenderOp) node()       {}

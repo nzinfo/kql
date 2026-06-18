@@ -30,6 +30,47 @@ func (p *Parser) parseMvExpandOp(pipePos token.Pos) *ast.MvExpandOp {
 	return &ast.MvExpandOp{Pipe: pipePos, MvExp: opPos, Cols: cols, Limit: limit}
 }
 
+// parseMvApplyOp: `| mv-apply Col [to typeof(T)], ... [limit N] [id GUID] ON (SubQuery)`
+// (g4 mvapplyOperator). Applies a sub-query to each array element. Parsed +
+// translated as a pass-through (real semantics need client-side PostProc or a
+// lateral join — deferred). The ON expression is captured for future use.
+func (p *Parser) parseMvApplyOp(pipePos token.Pos) *ast.MvApplyOp {
+	opPos := p.pos
+	p.next() // consume mv-apply
+	_ = p.parseOperatorParams()
+	cols := p.parseNamedExprList()
+	// optional `to typeof(T)` per column — skip.
+	for p.cur == token.TO {
+		p.next()
+		_ = p.ParseExpr()
+	}
+	out := &ast.MvApplyOp{Pipe: pipePos, MvApply: opPos, Cols: cols}
+	// optional `limit N`
+	if p.cur == token.LIMIT {
+		p.next()
+		out.Limit = p.ParseExpr()
+	}
+	// optional `id GUID`
+	if p.cur == token.IDENT && p.lit == "id" {
+		p.next()
+		out.IdGUID = p.lit
+		p.next() // consume the GUID literal
+	}
+	// `ON ( SubQuery )`
+	if p.cur == token.ON {
+		out.OnPos = p.pos
+		p.next()
+		if p.cur == token.LPAREN {
+			p.next()
+			out.OnExpr = p.ParseExpr()
+			if p.cur == token.RPAREN {
+				p.next()
+			}
+		}
+	}
+	return out
+}
+
 // parseMakeSeriesOp: `| make-series <aggs> on <col> [from .. to .. step .. | in range(..)] [by ...]`
 // (g4 makeSeriesOperator).
 func (p *Parser) parseMakeSeriesOp(pipePos token.Pos) *ast.MakeSeriesOp {
