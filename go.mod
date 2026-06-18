@@ -3,6 +3,7 @@ module nzinfo/kql
 go 1.25.0
 
 require (
+	github.com/apache/arrow-go/v18 v18.5.1
 	github.com/duckdb/duckdb-go/v2 v2.10503.1
 	github.com/jackc/pgx/v5 v5.10.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -10,7 +11,6 @@ require (
 )
 
 require (
-	github.com/apache/arrow-go/v18 v18.5.1 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.10503.0 // indirect
 	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.10503.0 // indirect
 	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.10503.0 // indirect
