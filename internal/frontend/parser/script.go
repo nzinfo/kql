@@ -43,6 +43,10 @@ func (p *Parser) parseStatement() ast.Stmt {
 		return p.parseSetStmt()
 	case token.DECLARE:
 		return p.parseDeclareStmt()
+	case token.ALIAS:
+		return p.parseAliasDatabaseStmt()
+	case token.RESTRICT:
+		return p.parseRestrictAccessStmt()
 	}
 	pipe := p.parsePipeline()
 	return &ast.QueryStmt{Pipeline: pipe}
@@ -106,6 +110,39 @@ func (p *Parser) parseDeclareStmt() ast.Stmt {
 		p.next()
 	}
 	return out
+}
+
+// parseAliasDatabaseStmt parses `alias database Name = Expr` (g4
+// aliasDatabaseStatement). Database-level aliasing — parsed + skipped (query
+// metadata, like SetStmt). The translator ignores it.
+func (p *Parser) parseAliasDatabaseStmt() ast.Stmt {
+	pos := p.expect(token.ALIAS)
+	_ = pos
+	if p.cur == token.DATABASE {
+		p.next()
+	}
+	// Consume Name = Expr to the next ; or EOF.
+	for p.cur != token.SEMI && p.cur != token.EOF {
+		p.next()
+	}
+	return &ast.SetStmt{Set: pos, Name: &ast.Ident{Name: "alias_database"}}
+}
+
+// parseRestrictAccessStmt parses `restrict access to (Entity, ...)` (g4
+// restrictAccessStatement). Row-level security directive — parsed + skipped.
+func (p *Parser) parseRestrictAccessStmt() ast.Stmt {
+	pos := p.expect(token.RESTRICT)
+	if p.cur == token.ACCESS {
+		p.next()
+	}
+	if p.cur == token.TO {
+		p.next()
+	}
+	// Consume (Entity, ...) to the next ; or EOF.
+	for p.cur != token.SEMI && p.cur != token.EOF {
+		p.next()
+	}
+	return &ast.SetStmt{Set: pos, Name: &ast.Ident{Name: "restrict_access"}}
 }
 
 // parseQueryParams parses `Name:Type[=Default], ...` up to the closing ).
