@@ -117,7 +117,7 @@ KQL 文本
 |---|---|---|
 | O3 PhysicalPlanner | 系统化物理方案枚举(HashJoin/NestedLoop/IndexedLookup) | 中 |
 | duckdb 后端 | 第三个后端（分析加速） | 中 |
-| O6 高级规则 | CTE 断点决策（待）；**join 顺序重排已完成**（left-deep System-R DP，可交换 join 链重排，commit 见 log） | 中 |
+| O6 高级规则 | **CTE 断点决策已完成**（cost-based MATERIALIZED/NOT MATERIALIZED，footprint × work_mem 阈值）；**join 顺序重排已完成**（System-R DP） | 已完成 |
 | 更多 builtin 函数 | ✅ **已对齐**：433 catalog names 覆盖 kqlparser 全部 386 标量+39 聚合（commit 026332a/2c70efe/76482f2/206e9a1） | 已完成 |
 | lambda 调用语义 | `let f=(x){...}` 目前只解析不调用 | 低 |
 | datatable 数据物化 | `datatable(...)[data]` 目前占位 SourceTable | 低 |
@@ -134,4 +134,5 @@ KQL 文本
 3. **PostProc 框架** — 让 mv-expand/parse/make-series 真正执行（而非 passthrough）
 4. **类型推断** — binder 填 Col.T，让更多函数翻译正确
 5. ✅ **更多 builtin** — 已抽全 kqlparser 386 标量+39 聚合（433 catalog names）
+6. **饱和语义分析查询改写**（未来方向）：引入基于饱和语义（saturation semantics）的查询改写机制——分析列取值饱和性（cardinality cap）消除冗余 distinct/union、折叠恒真/恒假谓词、识别幂等投影。与 O2 规则引擎正交，可作 O6.S4 探索方向。
 6. **T-series 扩展** — 更多语料（Azure-Sentinel 仓库全量）、跨后端等价性测试
