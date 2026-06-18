@@ -1,0 +1,342 @@
+[
+  {
+    "name": "ShadowCopyDeletion",
+    "query": "let CommonRansomwareExecutionCommands = dynamic([@'vssadmin.exe delete shadows /all /quiet',\n@'wmic.exe shadowcopy delete', @'wbadmin delete catalog -quiet',\n@'Get-WmiObject Win32_Shadowcopy | ForEach-Object {$_.Delete();}',\n@'del /s /f /q c:\\*.VHD c:\\*.bac c:\\*.bak c:\\*.wbcat c:\\*.bkf c:\\Backup*.* c:\\backup*.* c:\\*.set c:\\*.win c:\\*.dsk',\n@'wbadmin delete systemstatebackup -keepVersions:0',\n@'schtasks.exe /Change /TN \"\\Microsoft\\Windows\\SystemRestore\\SR\" /disable',\n@'reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\SystemRestore\" /v \"DisableConfig\" /t \"REG_DWORD\" /d \"1\" /f']);\nDeviceProcessEvents\n| where ProcessCommandLine has_any (CommonRansomwareExecutionCommands)\n| project-reorder Timestamp, ProcessCommandLine, DeviceName, AccountName"
+  },
+  {
+    "name": "KerberoastingDetection",
+    "query": "let starttime = 1d;\nlet endtime = 1h;\nlet prev23hThreshold = 4;\nlet prev1hThreshold = 15;\nlet Kerbevent = (union isfuzzy=true\n(SecurityEvent\n| where TimeGenerated >= ago(starttime)\n| where EventID == 4769\n| parse EventData with * 'TicketEncryptionType\">' TicketEncryptionType \"<\" *\n| where TicketEncryptionType == '0x17'\n| parse EventData with * 'TicketOptions\">' TicketOptions \"<\" *\n| where TicketOptions == '0x40810000'\n| parse EventData with * 'Status\">' Status \"<\" *\n| where Status == '0x0'\n| parse EventData with * 'ServiceName\">' ServiceName \"<\" *\n| where ServiceName !contains \"$\" and ServiceName !contains \"krbtgt\"\n| parse EventData with * 'TargetUserName\">' TargetUserName \"<\" *\n| where TargetUserName !contains \"$@\" and TargetUserName !contains ServiceName\n| parse EventData with * 'IpAddress\">::ffff:' ClientIPAddress \"<\" *\n),\n(\nWindowsEvent\n| where TimeGenerated >= ago(starttime)\n| where EventID == 4769 and EventData has '0x17' and EventData has '0x40810000' and EventData has 'krbtgt'\n| extend TicketEncryptionType = tostring(EventData.TicketEncryptionType)\n| where TicketEncryptionType == '0x17'\n| extend TicketOptions = tostring(EventData.TicketOptions)\n| where TicketOptions == '0x40810000'\n| extend Status = tostring(EventData.Status)\n| where Status == '0x0'\n| extend ServiceName = tostring(EventData.ServiceName)\n| where ServiceName !contains \"$\" and ServiceName !contains \"krbtgt\"\n| extend TargetUserName = tostring(EventData.TargetUserName)\n| where TargetUserName !contains \"$@\" and TargetUserName !contains ServiceName\n| extend ClientIPAddress = tostring(EventData.IpAddress)\n));\nlet Kerbevent23h = Kerbevent\n| where TimeGenerated >= ago(starttime) and TimeGenerated < ago(endtime)\n| summarize ServiceNameCountPrev23h = dcount(ServiceName), ServiceNameSet23h = makeset(ServiceName)\nby Computer, TargetUserName,TargetDomainName, ClientIPAddress, TicketOptions, TicketEncryptionType, Status\n| where ServiceNameCountPrev23h < prev23hThreshold;\nlet Kerbevent1h =\nKerbevent\n| where TimeGenerated >= ago(endtime)\n| summarize min(TimeGenerated), max(TimeGenerated), ServiceNameCountPrev1h = dcount(ServiceName), ServiceNameSet1h = makeset(ServiceName)\nby Computer, TargetUserName, TargetDomainName, ClientIPAddress, TicketOptions, TicketEncryptionType, Status;\nKerbevent1h\n| join kind=leftanti\n(\nKerbevent23h\n) on TargetUserName, TargetDomainName\n| where ServiceNameCountPrev1h > prev1hThreshold\n| project StartTime = min_TimeGenerated, EndTime = max_TimeGenerated, TargetUserName, Computer, ClientIPAddress, TicketOptions,\nTicketEncryptionType, Status, ServiceNameCountPrev1h, ServiceNameSet1h, TargetDomainName\n| extend HostName = tostring(split(Computer, \".\")[0]), DomainIndex = toint(indexof(Computer, '.'))\n| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex + 1), Computer)\n| extend TargetAccount = strcat(TargetDomainName, \"\\\\\", TargetUserName)\n| project-away DomainIndex"
+  },
+  {
+    "name": "ExcessiveLogonFailures",
+    "query": "let starttime = 8d;\nlet endtime = 1d;\nlet threshold = 0.333;\nlet countlimit = 50;\nSecurityEvent\n| where TimeGenerated >= ago(endtime)\n| where EventID == 4625 and AccountType =~ \"User\"\n| where IpAddress !in (\"127.0.0.1\", \"::1\")\n| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), CountToday = count() by EventID, Account, LogonTypeName, SubStatus, AccountType, Computer, WorkstationName, IpAddress, Process\n| join kind=leftouter (\n    SecurityEvent\n    | where TimeGenerated between (ago(starttime) .. ago(endtime))\n    | where EventID == 4625 and AccountType =~ \"User\"\n    | where IpAddress !in (\"127.0.0.1\", \"::1\")\n    | summarize CountPrev7day = count() by EventID, Account, LogonTypeName, SubStatus, AccountType, Computer, WorkstationName, IpAddress\n) on EventID, Account, LogonTypeName, SubStatus, AccountType, Computer, WorkstationName, IpAddress\n| where CountToday >= coalesce(CountPrev7day,0)*threshold and CountToday >= countlimit\n| extend Reason = case(\nSubStatus =~ '0xC000005E', 'There are currently no logon servers available to service the logon request.',\nSubStatus =~ '0xC0000064', 'User logon with misspelled or bad user account',\nSubStatus =~ '0xC000006A', 'User logon with misspelled or bad password',\nSubStatus =~ '0xC000006D', 'Bad user name or password',\nSubStatus =~ '0xC000006E', 'Unknown user name or bad password',\nSubStatus =~ '0xC000006F', 'User logon outside authorized hours',\nSubStatus =~ '0xC0000070', 'User logon from unauthorized workstation',\nSubStatus =~ '0xC0000071', 'User logon with expired password',\nSubStatus =~ '0xC0000072', 'User logon to account disabled by administrator',\nSubStatus =~ '0xC00000DC', 'Indicates the Sam Server was in the wrong state to perform the desired operation',\nSubStatus =~ '0xC0000133', 'Clocks between DC and other computer too far out of sync',\nSubStatus =~ '0xC000015B', 'The user has not been granted the requested logon type at this machine',\nSubStatus =~ '0xC000018C', 'The logon request failed because the trust relationship between the primary domain and the trusted domain failed',\nSubStatus =~ '0xC0000192', 'An attempt was made to logon, but the Netlogon service was not started',\nSubStatus =~ '0xC0000193', 'User logon with expired account',\nSubStatus =~ '0xC0000224', 'User is required to change password at next logon',\nSubStatus =~ '0xC0000225', 'Evidently a bug in Windows and not a risk',\nSubStatus =~ '0xC0000234', 'User logon with account locked',\nSubStatus =~ '0xC00002EE', 'Failure Reason: An Error occurred during Logon',\nSubStatus =~ '0xC0000413', 'Logon Failure: The machine you are logging onto is protected by an authentication firewall',\nstrcat('Unknown reason substatus: ', SubStatus))\n| extend WorkstationName = iff(WorkstationName == \"-\" or isempty(WorkstationName), Computer , WorkstationName)\n| project StartTime, EndTime, EventID, Account, LogonTypeName, SubStatus, Reason, AccountType, Computer, WorkstationName, IpAddress, CountToday, CountPrev7day, Avg7Day = round(CountPrev7day*1.00/7,2), Process\n| summarize StartTime = min(StartTime), EndTime = max(EndTime), Computer = make_set(Computer,128), IpAddressList = make_set(IpAddress,128), sum(CountToday), sum(CountPrev7day), avg(Avg7Day)\nby EventID, Account, LogonTypeName, SubStatus, Reason, AccountType, WorkstationName, Process\n| order by sum_CountToday desc nulls last\n| extend timestamp = StartTime, NTDomain = tostring(split(Account, '\\\\', 0)[0]), Name = tostring(split(Account, '\\\\', 1)[0])"
+  },
+  {
+    "name": "SyslogAnomalyDetection",
+    "query": "let Computers=Syslog\n| where TimeGenerated >= ago(4d)\n| summarize EventCount=count() by Computer, bin(TimeGenerated, 15m)\n| where EventCount >= 1000\n| order by TimeGenerated\n| summarize EventCount=make_list(EventCount), TimeGenerated=make_list(TimeGenerated) by Computer\n| extend outliers=series_decompose_anomalies(EventCount, 2)\n| mv-expand TimeGenerated, EventCount, outliers\n| where outliers == 1\n| distinct Computer\n;\nSyslog\n| where TimeGenerated >= ago(4d)\n| where Computer in (Computers)\n| summarize EventCount=count() by Computer, bin(TimeGenerated, 15m)\n| render timechart"
+  },
+  {
+    "name": "ListGlobalAdmins",
+    "query": "IdentityInfo\n| where AssignedRoles contains \"Global Admin\"\n| distinct AccountName, AccountDomain, AccountUPN, AccountSID"
+  },
+  {
+    "name": "SentinelAnomalies",
+    "query": "let TimeFrame = 7d;\nAnomalies\n| where TimeGenerated > ago(TimeFrame)\n| extend DetailedResultsKQL = ExtendedLinks[0].DetailBladeInputs\n| project-reorder TimeGenerated, Description, UserPrincipalName, RuleName, Tactics, DetailedResultsKQL, Entities"
+  },
+  {
+    "name": "AnalyticsRulesEfficiency",
+    "query": "let TimeRange = 30d;\nSecurityIncident\n| where TimeGenerated > ago(TimeRange)\n| summarize arg_max(TimeGenerated, *) by IncidentNumber\n| where RelatedAnalyticRuleIds != \"[]\"\n| where isnotempty(Classification)\n| summarize\n     TotalIncidentsTriggered = count(),\n     TotalUndetermined = countif(Classification == \"Undetermined\"),\n     TotalBenignPositive = countif(Classification == \"BenignPositive\"),\n     TotalTruePositive = countif(Classification == \"TruePositive\"),\n     TotalFalsePositive = countif(Classification == \"FalsePositive\")\n     by tostring(RelatedAnalyticRuleIds), Title\n| sort by TotalFalsePositive, TotalIncidentsTriggered"
+  },
+  {
+    "name": "PowerShellEncodedCommands",
+    "query": "let EncodedList = dynamic(['-encodedcommand', '-enc']);\nlet TimeFrame = 48h;\nDeviceProcessEvents\n| where Timestamp > ago(TimeFrame)\n| where ProcessCommandLine contains \"powershell\" or InitiatingProcessCommandLine contains \"powershell\"\n| where ProcessCommandLine has_any (EncodedList) or InitiatingProcessCommandLine has_any (EncodedList)\n| extend base64String = extract(@'\\s+([A-Za-z0-9+/]{20}\\S+$)', 1, ProcessCommandLine)\n| extend DecodedCommandLine = base64_decode_tostring(base64String)\n| extend DecodedCommandLineReplaceEmptyPlaces = replace_string(DecodedCommandLine, '\\u0000', '')\n| where isnotempty(base64String) and isnotempty(DecodedCommandLineReplaceEmptyPlaces)\n| summarize UniqueExecutionsList = make_set(DecodedCommandLineReplaceEmptyPlaces) by DeviceName\n| extend TotalUniqueEncodedCommandsExecuted = array_length(UniqueExecutionsList)\n| project DeviceName, TotalUniqueEncodedCommandsExecuted, UniqueExecutionsList\n| sort by TotalUniqueEncodedCommandsExecuted"
+  },
+  {
+    "name": "BloodHoundDetection",
+    "query": "let BloodhoundCommands = dynamic(['-collectionMethod', 'invoke-bloodhound' ,'get-bloodHounddata']);\nDeviceProcessEvents\n| where ProcessCommandLine has_any (BloodhoundCommands)\n| project\n     Timestamp,\n     DeviceName,\n     AccountName,\n     AccountDomain,\n     ProcessCommandLine,\n     FileName,\n     InitiatingProcessCommandLine,\n     InitiatingProcessFileName"
+  },
+  {
+    "name": "ComplexJoinMultipleTables",
+    "query": "let timeframe = 1d;\nlet threshold = 3;\nSigninLogs\n| where TimeGenerated >= ago(timeframe)\n| where ResultType != \"0\"\n| where AppDisplayName has_any (\"Azure\", \"Office\", \"SharePoint\", \"OneDrive\")\n| summarize FailedAttempts = count(), Apps = make_set(AppDisplayName), Resources = make_set(ResourceDisplayName)\n    by UserPrincipalName, IPAddress, Location, tostring(DeviceDetail), UserAgent\n| where FailedAttempts >= threshold\n| join kind=inner (\n    AuditLogs\n    | where TimeGenerated >= ago(timeframe)\n    | where OperationName has_any (\"Add member to group\", \"Add user\", \"Update user\")\n    | extend TargetUPN = tostring(TargetResources[0].userPrincipalName)\n    | project TimeGenerated, InitiatedByUPN = tostring(InitiatedBy.user.userPrincipalName), OperationName, TargetUPN\n) on $left.UserPrincipalName == $right.InitiatedByUPN\n| project-reorder UserPrincipalName, FailedAttempts, Apps, IPAddress, Location"
+  },
+  {
+    "name": "TimeSeriesAnalysis",
+    "query": "let lookback = 14d;\nlet timeframe = 1h;\nlet scorethreshold = 5;\nlet PersssssistAnomalyData = materialize (\n    DeviceNetworkEvents\n    | where TimeGenerated >= ago(lookback)\n    | where ActionType == \"ConnectionSuccess\"\n    | summarize TotalBytesSent = sum(SentBytes) by DestinationIP = RemoteIP, DestinationPort = RemotePort, bin(TimeGenerated, timeframe)\n    | summarize EventCount = make_list(TotalBytesSent), TimeList = make_list(TimeGenerated) by DestinationIP, DestinationPort\n    | extend outliers = series_decompose_anomalies(EventCount, scorethreshold)\n    | mv-expand TimeGenerated = TimeList, EventCount, outliers to typeof(double)\n    | where outliers > 0\n);\nPersssssistAnomalyData\n| summarize AnomalyHours = dcount(TimeGenerated), TotalBytes = sum(tolong(EventCount)) by DestinationIP, DestinationPort\n| where AnomalyHours > 5 and TotalBytes > 10000000\n| sort by TotalBytes desc"
+  },
+  {
+    "name": "AzureActivityAnalysis",
+    "query": "AzureActivity\n| where TimeGenerated > ago(7d)\n| where OperationNameValue has_any (\"Microsoft.Compute/virtualMachines/write\", \"Microsoft.Compute/virtualMachines/delete\")\n| where ActivityStatusValue == \"Success\"\n| extend ResourceInfo = parse_json(Properties)\n| extend VMName = tostring(split(ResourceId, \"/\")[-1])\n| summarize\n    Operations = count(),\n    FirstOperation = min(TimeGenerated),\n    LastOperation = max(TimeGenerated),\n    VMList = make_set(VMName)\n    by CallerIpAddress, Caller, OperationNameValue\n| where Operations > 5\n| order by Operations desc"
+  },
+  {
+    "name": "NetworkConnectionAnomalies",
+    "query": "let lookback = 7d;\nlet RareConnections = DeviceNetworkEvents\n| where TimeGenerated > ago(lookback)\n| where ActionType == \"ConnectionSuccess\"\n| where RemotePort in (22, 23, 3389, 5900, 5985, 5986)\n| where not(RemoteIP startswith \"10.\" or RemoteIP startswith \"192.168.\" or RemoteIP startswith \"172.16.\")\n| summarize ConnectionCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n    Devices = make_set(DeviceName), LocalIPs = make_set(LocalIP)\n    by RemoteIP, RemotePort\n| where ConnectionCount < 5\n| extend TotalDevices = array_length(Devices)\n| where TotalDevices < 3;\nRareConnections\n| join kind=leftouter (\n    ThreatIntelligenceIndicator\n    | where TimeGenerated > ago(lookback)\n    | where NetworkIP != \"\"\n    | distinct NetworkIP, ThreatType, ConfidenceScore\n) on $left.RemoteIP == $right.NetworkIP\n| project-reorder RemoteIP, RemotePort, ConnectionCount, ThreatType, ConfidenceScore"
+  },
+  {
+    "name": "UserBehaviorAnalysis",
+    "query": "let timeframe = 14d;\nlet baseline = 30d;\nBehaviorAnalytics\n| where TimeGenerated > ago(timeframe)\n| where ActivityType has_any (\"FailedLogOn\", \"LogOn\", \"ElevateAccess\")\n| summarize\n    ActivityCount = count(),\n    UniqueDevices = dcount(SourceDevice),\n    UniqueIPs = dcount(SourceIPAddress),\n    AvgRiskScore = avg(InvestigationPriority)\n    by UserPrincipalName, ActivityType, bin(TimeGenerated, 1d)\n| join kind=leftouter (\n    BehaviorAnalytics\n    | where TimeGenerated between (ago(baseline) .. ago(timeframe))\n    | summarize BaselineCount = count() by UserPrincipalName, ActivityType\n) on UserPrincipalName, ActivityType\n| extend AnomalyScore = iff(BaselineCount > 0, (ActivityCount - BaselineCount) * 1.0 / BaselineCount, 1.0)\n| where AnomalyScore > 0.5 or AvgRiskScore > 50"
+  },
+  {
+    "name": "ProcessCreationWithParentAnalysis",
+    "query": "DeviceProcessEvents\n| where TimeGenerated > ago(1d)\n| where FileName in~ (\"cmd.exe\", \"powershell.exe\", \"pwsh.exe\", \"wscript.exe\", \"cscript.exe\", \"mshta.exe\")\n| where InitiatingProcessFileName in~ (\"winword.exe\", \"excel.exe\", \"powerpnt.exe\", \"outlook.exe\", \"msaccess.exe\")\n| extend CommandLineLength = strlen(ProcessCommandLine)\n| summarize\n    EventCount = count(),\n    AvgCommandLineLength = avg(CommandLineLength),\n    Devices = make_set(DeviceName, 10),\n    SampleCommands = make_set(ProcessCommandLine, 5)\n    by FileName, InitiatingProcessFileName, AccountName\n| where EventCount > 2 or AvgCommandLineLength > 500\n| order by EventCount desc"
+  },
+  {
+    "name": "DNSQueryAnalysis",
+    "query": "let lookback = 7d;\nlet threshold = 100;\nDnsEvents\n| where TimeGenerated > ago(lookback)\n| where QueryType in (\"A\", \"AAAA\", \"CNAME\")\n| extend Domain = tostring(split(Name, \".\")[-2])\n| extend TLD = tostring(split(Name, \".\")[-1])\n| where TLD !in (\"local\", \"internal\", \"corp\", \"lan\")\n| summarize\n    QueryCount = count(),\n    UniqueSubdomains = dcount(Name),\n    FirstQuery = min(TimeGenerated),\n    LastQuery = max(TimeGenerated),\n    ClientIPs = make_set(ClientIP, 50)\n    by Domain, TLD\n| where QueryCount > threshold or UniqueSubdomains > 50\n| extend EntropyScore = log(UniqueSubdomains) / log(2)\n| where EntropyScore > 3\n| order by QueryCount desc"
+  },
+  {
+    "name": "RegistryModificationTracking",
+    "query": "let SuspiciousKeys = dynamic([\n    @\"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\",\n    @\"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce\",\n    @\"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\",\n    @\"SYSTEM\\CurrentControlSet\\Services\",\n    @\"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run\"\n]);\nDeviceRegistryEvents\n| where TimeGenerated > ago(24h)\n| where ActionType in (\"RegistryValueSet\", \"RegistryKeyCreated\")\n| where RegistryKey has_any (SuspiciousKeys)\n| where InitiatingProcessFileName !in (\"svchost.exe\", \"services.exe\", \"msiexec.exe\", \"TiWorker.exe\")\n| summarize\n    ModificationCount = count(),\n    Values = make_set(RegistryValueName, 10),\n    Data = make_set(RegistryValueData, 10)\n    by DeviceName, RegistryKey, InitiatingProcessFileName, InitiatingProcessCommandLine\n| where ModificationCount > 1\n| order by ModificationCount desc"
+  },
+  {
+    "name": "FileHashHunting",
+    "query": "let MaliciousHashes = dynamic([\n    \"e99a18c428cb38d5f260853678922e03\",\n    \"098f6bcd4621d373cade4e832627b4f6\",\n    \"5d41402abc4b2a76b9719d911017c592\"\n]);\nDeviceFileEvents\n| where TimeGenerated > ago(7d)\n| where ActionType in (\"FileCreated\", \"FileModified\")\n| where MD5 in (MaliciousHashes) or SHA256 in (MaliciousHashes)\n| summarize\n    EventCount = count(),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    Devices = make_set(DeviceName),\n    FilePaths = make_set(FolderPath)\n    by FileName, MD5, SHA256\n| extend DeviceCount = array_length(Devices)\n| order by DeviceCount desc, EventCount desc"
+  },
+  {
+    "name": "AuthenticationPatterns",
+    "query": "let timeframe = 7d;\nunion SigninLogs, AADNonInteractiveUserSignInLogs\n| where TimeGenerated > ago(timeframe)\n| extend DeviceOS = tostring(DeviceDetail.operatingSystem)\n| extend DeviceBrowser = tostring(DeviceDetail.browser)\n| extend DeviceId = tostring(DeviceDetail.deviceId)\n| summarize\n    SuccessCount = countif(ResultType == \"0\"),\n    FailureCount = countif(ResultType != \"0\"),\n    UniqueDevices = dcount(DeviceId),\n    UniqueIPs = dcount(IPAddress),\n    UniqueLocations = dcount(Location),\n    OSTypes = make_set(DeviceOS, 5),\n    Browsers = make_set(DeviceBrowser, 5)\n    by UserPrincipalName, AppDisplayName, bin(TimeGenerated, 1h)\n| extend FailureRate = FailureCount * 100.0 / (SuccessCount + FailureCount)\n| where FailureRate > 30 or UniqueLocations > 3"
+  },
+  {
+    "name": "CloudAppActivity",
+    "query": "CloudAppEvents\n| where TimeGenerated > ago(24h)\n| where ActionType has_any (\"FileDownloaded\", \"FileUploaded\", \"FileShared\", \"FileDeleted\")\n| extend FileExtension = tostring(split(ObjectName, \".\")[-1])\n| extend FileSize = tolong(RawEventData.file_size)\n| summarize\n    TotalActions = count(),\n    TotalSize = sum(FileSize),\n    UniqueFiles = dcount(ObjectName),\n    Actions = make_set(ActionType)\n    by AccountDisplayName, Application, FileExtension, bin(TimeGenerated, 1h)\n| where TotalActions > 50 or TotalSize > 100000000\n| order by TotalSize desc"
+  },
+  {
+    "name": "ThreatIntelligenceCorrelation",
+    "query": "let TI = ThreatIntelligenceIndicator\n| where TimeGenerated > ago(30d)\n| where isnotempty(NetworkIP) or isnotempty(DomainName) or isnotempty(FileHashValue)\n| where ConfidenceScore > 50\n| extend IndicatorType = case(\n    isnotempty(NetworkIP), \"IP\",\n    isnotempty(DomainName), \"Domain\",\n    isnotempty(FileHashValue), \"FileHash\",\n    \"Other\")\n| project IndicatorValue = coalesce(NetworkIP, DomainName, FileHashValue), IndicatorType, ThreatType, ConfidenceScore;\nDeviceNetworkEvents\n| where TimeGenerated > ago(1d)\n| join kind=inner (TI | where IndicatorType == \"IP\") on $left.RemoteIP == $right.IndicatorValue\n| summarize\n    HitCount = count(),\n    Devices = make_set(DeviceName, 20),\n    FirstHit = min(TimeGenerated),\n    LastHit = max(TimeGenerated)\n    by RemoteIP, ThreatType, ConfidenceScore\n| order by ConfidenceScore desc, HitCount desc"
+  },
+  {
+    "name": "CustomFunctionUsage",
+    "query": "let GetRiskLevel = (score: int) {\n    case(\n        score >= 90, \"Critical\",\n        score >= 70, \"High\",\n        score >= 50, \"Medium\",\n        score >= 30, \"Low\",\n        \"Informational\"\n    )\n};\nlet TimeWindow = 7d;\nSecurityAlert\n| where TimeGenerated > ago(TimeWindow)\n| extend RiskScore = toint(ExtendedProperties.RiskScore)\n| extend RiskLevel = GetRiskLevel(RiskScore)\n| summarize AlertCount = count(), AvgRiskScore = avg(RiskScore) by RiskLevel, AlertName, ProductName\n| where AlertCount > 5\n| order by AvgRiskScore desc"
+  },
+  {
+    "name": "DataExfiltrationDetection",
+    "query": "let lookback = 14d;\nlet timeframe = 1h;\nlet bytethreshold = 50000000;\nDeviceNetworkEvents\n| where TimeGenerated > ago(lookback)\n| where ActionType == \"ConnectionSuccess\"\n| where RemotePort in (80, 443, 8080, 8443)\n| where not(RemoteIP startswith \"10.\" or RemoteIP startswith \"192.168.\" or RemoteIP startswith \"172.\")\n| summarize TotalBytesSent = sum(SentBytes), TotalBytesReceived = sum(ReceivedBytes)\n    by DeviceName, RemoteIP, RemotePort, bin(TimeGenerated, timeframe)\n| extend Ratio = TotalBytesSent * 1.0 / max_of(TotalBytesReceived, 1)\n| where TotalBytesSent > bytethreshold and Ratio > 10\n| summarize\n    HourlyExfil = make_list(TotalBytesSent),\n    TimeStamps = make_list(TimeGenerated)\n    by DeviceName, RemoteIP, RemotePort\n| extend outliers = series_decompose_anomalies(HourlyExfil, 3)\n| mv-expand TimeStamps, HourlyExfil, outliers\n| where outliers > 0"
+  },
+  {
+    "name": "MultiTableComplexQuery",
+    "query": "let timeframe = 7d;\nlet SuspiciousUsers = SigninLogs\n| where TimeGenerated > ago(timeframe)\n| where ResultType != \"0\"\n| summarize FailedCount = count() by UserPrincipalName\n| where FailedCount > 10\n| project UserPrincipalName;\nlet UserAlerts = SecurityAlert\n| where TimeGenerated > ago(timeframe)\n| mv-expand todynamic(Entities)\n| extend EntityType = tostring(Entities.Type)\n| where EntityType == \"account\"\n| extend AlertUPN = tostring(Entities.Name)\n| summarize AlertCount = count(), AlertTypes = make_set(AlertName) by AlertUPN;\nSuspiciousUsers\n| join kind=leftouter (UserAlerts) on $left.UserPrincipalName == $right.AlertUPN\n| join kind=leftouter (\n    AuditLogs\n    | where TimeGenerated > ago(timeframe)\n    | where OperationName has \"password\"\n    | extend TargetUPN = tostring(TargetResources[0].userPrincipalName)\n    | summarize PasswordOps = count() by TargetUPN\n) on $left.UserPrincipalName == $right.TargetUPN\n| project UserPrincipalName, AlertCount = coalesce(AlertCount, 0), PasswordOps = coalesce(PasswordOps, 0), AlertTypes"
+  },
+  {
+    "name": "ComplexParsing",
+    "query": "Syslog\n| where TimeGenerated > ago(1d)\n| where Facility == \"authpriv\" and SeverityLevel in (\"err\", \"warning\", \"crit\")\n| parse SyslogMessage with * \"user=\" User:string \" \" *\n| parse SyslogMessage with * \"src=\" SourceIP:string \" \" *\n| parse SyslogMessage with * \"port=\" Port:int \" \" *\n| parse SyslogMessage with * \"proto=\" Protocol:string *\n| where isnotempty(User)\n| summarize\n    EventCount = count(),\n    UniqueSourceIPs = dcount(SourceIP),\n    UniquePorts = dcount(Port),\n    SourceIPList = make_set(SourceIP, 20),\n    PortList = make_set(Port, 20)\n    by Computer, User, ProcessName\n| where EventCount > 100 or UniqueSourceIPs > 5"
+  },
+  {
+    "name": "RenderVisualization",
+    "query": "SecurityEvent\n| where TimeGenerated > ago(7d)\n| where EventID in (4624, 4625, 4648, 4672)\n| summarize EventCount = count() by EventID, bin(TimeGenerated, 1h)\n| render timechart with (title=\"Authentication Events Over Time\", xtitle=\"Time\", ytitle=\"Event Count\")"
+  },
+  {
+    "name": "MakeSeriesForecasting",
+    "query": "let starttime = 14d;\nlet endtime = 0d;\nlet interval = 1h;\nSecurityEvent\n| where TimeGenerated between (ago(starttime) .. ago(endtime))\n| where EventID == 4625\n| make-series FailedLogons = count() default = 0 on TimeGenerated from ago(starttime) to ago(endtime) step interval by Computer\n| extend (anomalies, score, baseline) = series_decompose_anomalies(FailedLogons, 1.5, -1, 'linefit')\n| mv-expand TimeGenerated, FailedLogons, anomalies, score, baseline\n| where anomalies == 1\n| project TimeGenerated, Computer, FailedLogons, score, baseline"
+  },
+  {
+    "name": "LocalAccountCreated",
+    "query": "let Servers = DeviceInfo\n| where DeviceType == 'Server'\n| summarize make_set(DeviceId);\nlet WorkStations = DeviceInfo\n| where DeviceType == 'Workstation'\n| summarize make_set(DeviceId);\nDeviceEvents\n| where ActionType == 'UserAccountCreated'\n| extend DeviceNameWithoutDomain = extract(@'(.*?)\\.', 1, DeviceName)\n| where AccountDomain =~ DeviceNameWithoutDomain\n| extend DeviceType = iff(DeviceId in (WorkStations), 'WorkStation', iff(DeviceId in (Servers), 'Server', 'Other'))\n| project Timestamp, DeviceName, DeviceType, ActionType, AccountDomain, AccountName, AccountSid"
+  },
+  {
+    "name": "PSExecExecutions",
+    "query": "DeviceProcessEvents\n| where ProcessCommandLine contains \"psexec.exe\"\n| extend RemoteDevice = extract(@'\\\\\\\\(.*)c:', 1, ProcessCommandLine)\n| summarize TotalRemoteDevices = dcount(RemoteDevice), RemoteDeviceList = make_set(RemoteDevice), ExecutedCommands = make_set(ProcessCommandLine) by DeviceName\n| sort by TotalRemoteDevices"
+  },
+  {
+    "name": "MshtaExecutions",
+    "query": "let SuspiciousChildProcesses = dynamic(['cmd.exe', 'powershell.exe', 'bash.exe', 'csscript.exe', 'mshta.exe', 'msiexec.exe', 'rundll32.exe']);\nDeviceProcessEvents\n| where InitiatingProcessFileName =~ 'mshta.exe' or ProcessVersionInfoOriginalFileName =~ 'mshta.exe'\n| project-reorder Timestamp, DeviceName, ProcessCommandLine, InitiatingProcessCommandLine, AccountUpn, ProcessVersionInfoOriginalFileName"
+  },
+  {
+    "name": "SecurityLogCleared",
+    "query": "DeviceEvents\n| where ActionType == 'SecurityLogCleared'\n| project Timestamp, DeviceName, ActionType"
+  },
+  {
+    "name": "RemoteSMBConnection",
+    "query": "DeviceNetworkEvents\n| where RemoteIPType == \"Public\"\n| where RemotePort == 445\n| where ActionType == \"ConnectionSuccess\"\n| project-reorder Timestamp, DeviceName, RemoteIP"
+  },
+  {
+    "name": "CleartextPasswordInCommandLine",
+    "query": "DeviceProcessEvents\n| where ProcessCommandLine has_all (\"-password\", \"*\")\n| extend UserName = tostring(extract(@'user(?:name)?[=\\s](\\w+)', 1, ProcessCommandLine))\n| summarize TotalExecutions = count(), UniqueCommands = dcount(ProcessCommandLine), CommandLines = make_set(ProcessCommandLine, 1000), UniqueUsers = dcount(UserName), UserNames = make_set(UserName) by DeviceName\n| sort by UniqueUsers, UniqueCommands, TotalExecutions"
+  },
+  {
+    "name": "ScheduledTaskHide",
+    "query": "SecurityEvent\n| where EventID == 4657\n| extend EventData = parse_xml(EventData).EventData.Data\n| mv-expand bagexpansion=array EventData\n| evaluate bag_unpack(EventData)\n| extend Key = tostring(column_ifexists('@Name', \"\")), Value = column_ifexists('#text', \"\")\n| evaluate pivot(Key, any(Value), TimeGenerated, TargetAccount, Computer, EventSourceName, Channel, Task, Level, EventID, Activity, TargetLogonId, SourceComputerId, EventOriginId, Type, _ResourceId, TenantId, SourceSystem, ManagementGroupName, IpAddress, Account)\n| extend ObjectName = column_ifexists('ObjectName', \"\"), OperationType = column_ifexists('OperationType', \"\"), ObjectValueName = column_ifexists('ObjectValueName', \"\")\n| where ObjectName has 'Schedule\\\\TaskCache\\\\Tree' and ObjectValueName == \"SD\" and OperationType == \"%%1906\"\n| extend HostName = tostring(split(Computer, \".\")[0]), DomainIndex = toint(indexof(Computer, '.'))\n| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex + 1), Computer)\n| extend AccountName = tostring(split(TargetAccount, @'\\')[1]), AccountNTDomain = tostring(split(TargetAccount, @'\\')[0])\n| extend timestamp = TimeGenerated"
+  },
+  {
+    "name": "AzureADSignInRisk",
+    "query": "SigninLogs\n| where RiskLevelDuringSignIn != \"none\"\n| where ResultType == \"0\"\n| extend DeviceOS = tostring(DeviceDetail.operatingSystem)\n| extend DeviceTrust = tostring(DeviceDetail.trustType)\n| summarize RiskySignins = count(), UniqueApps = dcount(AppDisplayName), Locations = make_set(Location)\nby UserPrincipalName, RiskLevelDuringSignIn, DeviceOS, DeviceTrust\n| order by RiskySignins desc"
+  },
+  {
+    "name": "MFAFatigueAttack",
+    "query": "AADNonInteractiveUserSignInLogs\n| where TimeGenerated > ago(1h)\n| where ResultType == \"50074\"\n| summarize MFARequests = count(), UniqueIPs = dcount(IPAddress), IPList = make_set(IPAddress)\nby UserPrincipalName, AppDisplayName, bin(TimeGenerated, 5m)\n| where MFARequests > 5\n| order by MFARequests desc"
+  },
+  {
+    "name": "MalwareInRecycleBin",
+    "query": "DeviceFileEvents\n| where FolderPath has @'\\$Recycle.Bin\\'\n| where FileName endswith \".exe\" or FileName endswith \".dll\" or FileName endswith \".ps1\" or FileName endswith \".bat\"\n| summarize FileCount = count(), Files = make_set(FileName)\nby DeviceName, FolderPath\n| where FileCount > 3"
+  },
+  {
+    "name": "LSASSMemoryDump",
+    "query": "DeviceProcessEvents\n| where FileName in~ (\"procdump.exe\", \"procdump64.exe\", \"sqldumper.exe\", \"rundll32.exe\", \"comsvcs.dll\")\n| where ProcessCommandLine has_any (\"lsass\", \"Local Security Authority\")\n| project-reorder Timestamp, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName"
+  },
+  {
+    "name": "SuspiciousScheduledTask",
+    "query": "DeviceProcessEvents\n| where FileName =~ \"schtasks.exe\"\n| where ProcessCommandLine has \"/create\"\n| where ProcessCommandLine has_any (\"powershell\", \"cmd.exe\", \"wscript\", \"cscript\", \"mshta\", \"regsvr32\")\n| project-reorder Timestamp, DeviceName, ProcessCommandLine, AccountName"
+  },
+  {
+    "name": "RegistryRunKeyPersistence",
+    "query": "DeviceRegistryEvents\n| where RegistryKey has_any (@\"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\", @\"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce\")\n| where ActionType == \"RegistryValueSet\"\n| where RegistryValueData has_any (\".exe\", \".dll\", \".bat\", \".ps1\", \".vbs\", \"powershell\", \"cmd\")\n| project-reorder Timestamp, DeviceName, RegistryKey, RegistryValueName, RegistryValueData"
+  },
+  {
+    "name": "WMIPersistence",
+    "query": "DeviceEvents\n| where ActionType == \"WmiBindEventFilterToConsumer\"\n| project-reorder Timestamp, DeviceName, AdditionalFields\n| extend Consumer = tostring(parse_json(AdditionalFields).Consumer)\n| extend Filter = tostring(parse_json(AdditionalFields).Filter)\n| where isnotempty(Consumer)"
+  },
+  {
+    "name": "SuspiciousServiceCreation",
+    "query": "DeviceEvents\n| where ActionType == \"ServiceInstalled\"\n| extend ServiceName = tostring(parse_json(AdditionalFields).ServiceName)\n| extend ServicePath = tostring(parse_json(AdditionalFields).ServiceStartType)\n| where ServicePath has_any (@\"\\Temp\\\", @\"\\AppData\\\", @\"\\ProgramData\\\", @\"\\Users\\Public\\\")\n| project-reorder Timestamp, DeviceName, ServiceName, ServicePath"
+  },
+  {
+    "name": "DNSTunnelingDetection",
+    "query": "DnsEvents\n| where TimeGenerated > ago(1d)\n| extend SubdomainLength = strlen(tostring(split(Name, \".\")[0]))\n| where SubdomainLength > 30\n| summarize QueryCount = count(), UniqueSubdomains = dcount(Name), SampleQueries = make_set(Name, 10)\nby ClientIP, QueryType\n| where UniqueSubdomains > 100 or QueryCount > 500"
+  },
+  {
+    "name": "BruteForceRDP",
+    "query": "SecurityEvent\n| where EventID == 4625\n| where LogonType == 10\n| summarize FailedAttempts = count(), UniqueAccounts = dcount(TargetAccount), Accounts = make_set(TargetAccount)\nby IpAddress, Computer, bin(TimeGenerated, 1h)\n| where FailedAttempts > 20\n| order by FailedAttempts desc"
+  },
+  {
+    "name": "TokenManipulation",
+    "query": "SecurityEvent\n| where EventID == 4624\n| where LogonType == 9\n| where LogonProcessName == \"seclogo\"\n| project-reorder TimeGenerated, Computer, TargetUserName, TargetDomainName, IpAddress, ProcessName"
+  },
+  {
+    "name": "CobaltStrikeBeacon",
+    "query": "DeviceNetworkEvents\n| where RemotePort in (80, 443, 8080, 8443)\n| where ActionType == \"ConnectionSuccess\"\n| summarize ConnectionCount = count(), BytesSent = sum(SentBytes), BytesReceived = sum(ReceivedBytes)\nby DeviceName, RemoteIP, RemotePort, bin(Timestamp, 1m)\n| where ConnectionCount > 50 and BytesSent < 1000 and BytesReceived < 5000"
+  },
+  {
+    "name": "OfficeMacroExecution",
+    "query": "DeviceProcessEvents\n| where InitiatingProcessFileName in~ (\"winword.exe\", \"excel.exe\", \"powerpnt.exe\", \"outlook.exe\")\n| where FileName in~ (\"cmd.exe\", \"powershell.exe\", \"wscript.exe\", \"cscript.exe\", \"mshta.exe\", \"regsvr32.exe\")\n| project-reorder Timestamp, DeviceName, InitiatingProcessFileName, FileName, ProcessCommandLine"
+  },
+  {
+    "name": "PowerShellDownloadCradle",
+    "query": "DeviceProcessEvents\n| where FileName =~ \"powershell.exe\" or FileName =~ \"pwsh.exe\"\n| where ProcessCommandLine has_any (\"WebClient\", \"DownloadString\", \"DownloadFile\", \"Invoke-WebRequest\", \"iwr\", \"curl\", \"wget\", \"Net.WebClient\", \"Start-BitsTransfer\")\n| project-reorder Timestamp, DeviceName, ProcessCommandLine, InitiatingProcessFileName"
+  },
+  {
+    "name": "PassTheHashDetection",
+    "query": "SecurityEvent\n| where EventID == 4624\n| where LogonType == 9\n| where AuthenticationPackageName == \"Negotiate\"\n| where LogonProcessName == \"seclogo\"\n| project-reorder TimeGenerated, Computer, TargetUserName, TargetDomainName, WorkstationName, IpAddress"
+  },
+  {
+    "name": "GoldenTicketDetection",
+    "query": "SecurityEvent\n| where EventID == 4769\n| extend TicketOptions = extract(@'TicketOptions\">(.*?)<', 1, EventData)\n| extend TicketEncryptionType = extract(@'TicketEncryptionType\">(.*?)<', 1, EventData)\n| where TicketEncryptionType == \"0x17\"\n| where TicketOptions == \"0x40810000\"\n| project-reorder TimeGenerated, Computer, TargetUserName, ServiceName, IpAddress"
+  },
+  {
+    "name": "DCSyncAttack",
+    "query": "SecurityEvent\n| where EventID == 4662\n| where ObjectType contains \"domainDNS\"\n| where Properties has_any (\"Replicating Directory Changes\", \"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2\", \"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2\")\n| project-reorder TimeGenerated, Computer, SubjectUserName, SubjectDomainName, ObjectName"
+  },
+  {
+    "name": "EmptyQuery",
+    "query": "SecurityEvent | where FilePath == @\"C:\\Windows\\System32\\cmd.exe\""
+  },
+  {
+    "name": "UnicodeInQuery",
+    "query": "SecurityEvent | where Message contains \"utilisateur\" or Message contains \"Benutzer\""
+  },
+  {
+    "name": "LongIdentifier",
+    "query": "let a = 1; let b = 2; let c = a + b; SecurityEvent | where EventID == c"
+  },
+  {
+    "name": "ComplexDynamic",
+    "query": "let items = dynamic([\"a\", \"b\", \"c\"]); SecurityEvent | where Account has_any (items)"
+  },
+  {
+    "name": "DateTimeLiterals",
+    "query": "SecurityEvent | where TimeGenerated > datetime(2024-01-01) and TimeGenerated < datetime(2024-12-31T23:59:59Z)"
+  },
+  {
+    "name": "TimespanLiterals",
+    "query": "SecurityEvent | where TimeGenerated > ago(1d) | where TimeGenerated < ago(1h)"
+  },
+  {
+    "name": "NullHandling",
+    "query": "SecurityEvent | where isnotnull(IpAddress) and isnotempty(Account) | where isnull(TargetAccount)"
+  },
+  {
+    "name": "ArrayOperations",
+    "query": "SecurityEvent | extend arr = pack_array(Account, Computer, IpAddress) | where array_length(arr) > 0"
+  },
+  {
+    "name": "StringFunctions",
+    "query": "SecurityEvent | extend lower_account = tolower(Account) | extend upper_computer = toupper(Computer) | where strlen(Account) > 10"
+  },
+  {
+    "name": "MathFunctions",
+    "query": "SecurityEvent | summarize cnt = count() | extend log_cnt = log(cnt), sqrt_cnt = sqrt(cnt), abs_val = abs(cnt - 100)"
+  },
+  {
+    "name": "ConditionalCase",
+    "query": "SecurityEvent | extend Severity = case(EventID == 4625, \"High\", EventID == 4624, \"Low\", \"Medium\")"
+  },
+  {
+    "name": "Iff",
+    "query": "SecurityEvent | extend IsAdmin = iff(Account contains \"admin\", true, false)"
+  },
+  {
+    "name": "ExtractRegex",
+    "query": "SecurityEvent | extend Domain = extract(@\"@(.+)$\", 1, Account)"
+  },
+  {
+    "name": "ParseJson",
+    "query": "AuditLogs | extend Props = parse_json(AdditionalDetails) | extend Key = tostring(Props[0].key)"
+  },
+  {
+    "name": "SplitAndIndex",
+    "query": "SecurityEvent | extend Parts = split(Account, \"\\\\\") | extend Domain = Parts[0], User = Parts[1]"
+  },
+  {
+    "name": "BagUnpack",
+    "query": "SecurityEvent | extend Details = pack(\"Event\", EventID, \"Time\", TimeGenerated) | evaluate bag_unpack(Details)"
+  },
+  {
+    "name": "ExternalData",
+    "query": "externaldata(ip:string, country:string) [@\"https://example.com/data.csv\"] with (format=\"csv\")"
+  },
+  {
+    "name": "Materialize",
+    "query": "let data = materialize(SecurityEvent | where TimeGenerated > ago(1d)); data | summarize count() by EventID"
+  },
+  {
+    "name": "TopNested",
+    "query": "SecurityEvent | top-nested 5 of Computer by count(), top-nested 3 of EventID by count()"
+  },
+  {
+    "name": "Facet",
+    "query": "SecurityEvent | facet by Computer, EventID"
+  },
+  {
+    "name": "Consume",
+    "query": "SecurityEvent | consume"
+  },
+  {
+    "name": "GetSchema",
+    "query": "SecurityEvent | getschema"
+  },
+  {
+    "name": "SampleDistinct",
+    "query": "SecurityEvent | sample-distinct 10 of Computer"
+  },
+  {
+    "name": "MvExpand",
+    "query": "SecurityEvent | mv-expand kind=array Entities | extend EntityType = tostring(Entities.Type)"
+  },
+  {
+    "name": "Serialize",
+    "query": "SecurityEvent | serialize rn = row_number() | where rn <= 100"
+  },
+  {
+    "name": "Partition",
+    "query": "SecurityEvent | partition by Computer (summarize count())"
+  },
+  {
+    "name": "Fork",
+    "query": "SecurityEvent | fork (where EventID == 4624) (where EventID == 4625)"
+  },
+  {
+    "name": "Union",
+    "query": "union SecurityEvent, WindowsEvent | where TimeGenerated > ago(1d)"
+  },
+  {
+    "name": "UnionWithWildcard",
+    "query": "union Security* | summarize count() by Type"
+  },
+  {
+    "name": "JoinKinds",
+    "query": "SecurityEvent | join kind=inner (AuditLogs) on $left.Account == $right.Identity"
+  },
+  {
+    "name": "Lookup",
+    "query": "SecurityEvent | lookup kind=leftouter (datatable(Code:int, Desc:string)[4624, \"Success\", 4625, \"Failure\"]) on $left.EventID == $right.Code"
+  },
+  {
+    "name": "RangeOperator",
+    "query": "range x from 1 to 10 step 1 | extend squared = x * x"
+  },
+  {
+    "name": "Print",
+    "query": "print x = 1, y = 2, z = \"test\""
+  },
+  {
+    "name": "Datatable",
+    "query": "datatable(Name:string, Value:int)[\"A\", 1, \"B\", 2, \"C\", 3] | summarize sum(Value)"
+  }
+]
