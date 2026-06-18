@@ -21,6 +21,7 @@ import (
 
 	"nzinfo/kql/internal/backend"
 	"nzinfo/kql/internal/frontend/token"
+	"nzinfo/kql/internal/frontend/builtin"
 	"nzinfo/kql/internal/ir"
 )
 
@@ -838,7 +839,35 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		}
 		args = append(args, s)
 	}
+	// NeedsPostProc functions without a DuckDB-specific override: try the
+	// failback approximation table before the raw NAME(args) passthrough.
+	if spec := builtin.Lookup(n.Name); spec != nil && spec.NeedsPostProc {
+		if fb := builtin.LookupFailback(n.Name); fb != "" {
+			n := strings.Count(fb, "%s")
+			fill := args
+			if len(fill) > n {
+				fill = fill[:n]
+			}
+			out := fmt.Sprintf(fb, toAnyDuck(fill)...)
+			if len(args) > n {
+				extras := strings.Join(args[n:], ", ")
+				if idx := strings.LastIndex(out, ")"); idx >= 0 {
+					out = out[:idx] + ", " + extras + out[idx:]
+				}
+			}
+			return out, nil
+		}
+	}
 	return fmt.Sprintf("%s(%s)", name, strings.Join(args, ", ")), nil
+}
+
+// toAnyDuck converts []string to []interface{} for fmt.
+func toAnyDuck(s []string) []interface{} {
+	out := make([]interface{}, len(s))
+	for i, v := range s {
+		out[i] = v
+	}
+	return out
 }
 
 func (e *emitter) emitJoinOnExpr(expr ir.Expr, leftAlias, rightAlias string) (string, error) {

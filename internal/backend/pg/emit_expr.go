@@ -440,8 +440,16 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		if spec.SQLite != "" {
 			return applyTemplate(spec.SQLite, args), nil
 		}
+		// NeedsPostProc with no override: try failback approximation, then
+		// generic passthrough as last resort.
+		if spec.NeedsPostProc {
+			if fb := builtin.LookupFailback(n.Name); fb != "" {
+				return applyTemplate(fb, args), nil
+			}
+		}
 	}
-	// generic pass-through
+	// generic pass-through (last resort; may fail at runtime if the function
+	// doesn't exist on pg, but keeps the query parseable for diagnostics).
 	return fmt.Sprintf("%s(%s)", strings.ToUpper(n.Name), strings.Join(args, ", ")), nil
 }
 

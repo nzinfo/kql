@@ -337,11 +337,14 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		if spec.SQLite != "" {
 			return applySQLiteTemplate(spec.SQLite, args), nil
 		}
-		// No SQL translation (NeedsPostProc or simply unmapped): best-effort
-		// pass-through so the query at least parses/executes, and record the
-		// capability gap for the post-proc layer.
+		// No direct SQL template. If this is a NeedsPostProc function, try the
+		// failback table: a best-effort SQL approximation that lets the query
+		// run with degraded semantics instead of failing with "no such function".
 		if spec.NeedsPostProc {
 			e.notePostProc(n.Name)
+			if fb := builtin.LookupFailback(n.Name); fb != "" {
+				return applySQLiteTemplate(fb, args), nil
+			}
 		}
 	}
 	// cast-style to_<type> (not in the catalog as a single template since KQL
