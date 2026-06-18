@@ -1,0 +1,32 @@
+NOTICE
+
+nzinfo/kql
+==========
+
+This product includes KQL test queries adapted from publicly available
+sources:
+
+1. Microsoft Azure Sentinel Analytics Rules
+   Source: https://github.com/Azure/Azure-Sentinel
+   License: MIT License
+   Copyright (c) Microsoft Corporation
+
+2. Microsoft Kusto Query Language Documentation
+   Source: https://learn.microsoft.com/azure/data-explorer/kusto/query/
+   License: CC-BY 4.0 / MIT
+   Copyright (c) Microsoft Corporation
+
+3. Microsoft Sentinel Community Detection Rules
+   Source: https://github.com/Azure/Azure-Sentinel/tree/master/Detections
+   License: MIT License
+
+The KQL queries in pkg/kql/testdata/corpus/ are adapted (simplified and
+anonymized) from the above sources for parser testing purposes. They do NOT
+contain any customer data, internal schema names, or proprietary detection
+logic. All identifiers (IPs, GUIDs, emails) are synthetic placeholders.
+
+This product also includes software developed by:
+- The Go Authors (Go standard library)
+- pgx contributors (github.com/jackc/pgx)
+- modernc.org (pure-Go SQLite driver)
+- Apache Arrow contributors (github.com/apache/arrow-go)

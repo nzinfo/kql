@@ -58,6 +58,47 @@ var catalog = func() map[string]Spec {
 	add(Spec{Name: "datetime_add", MinArgs: 2, MaxArgs: 2, SQLite: "datetime(%s, %s)"})
 	add(Spec{Name: "datetime_diff", MinArgs: 3, MaxArgs: 3, SQLite: "0"}) // approx
 
+	// --- DateTime component extraction (very common in security/analytics KQL) ---
+	add(Spec{Name: "year", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%Y', %s)"})
+	add(Spec{Name: "month", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%m', %s)"})
+	add(Spec{Name: "dayofmonth", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%d', %s)"})
+	add(Spec{Name: "dayofweek", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%w', %s)"})
+	add(Spec{Name: "dayofyear", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%j', %s)"})
+	add(Spec{Name: "hour", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%H', %s)"})
+	add(Spec{Name: "minute", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%M', %s)"})
+	add(Spec{Name: "second", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%S', %s)"})
+	add(Spec{Name: "getmonth", MinArgs: 1, MaxArgs: 1, SQLite: "CAST(strftime('%%m', %s) AS INTEGER)"})
+	add(Spec{Name: "getyear", MinArgs: 1, MaxArgs: 1, SQLite: "CAST(strftime('%%Y', %s) AS INTEGER)"})
+	add(Spec{Name: "gethour", MinArgs: 1, MaxArgs: 1, SQLite: "CAST(strftime('%%H', %s) AS INTEGER)"})
+	add(Spec{Name: "getday", MinArgs: 1, MaxArgs: 1, SQLite: "CAST(strftime('%%d', %s) AS INTEGER)"})
+	add(Spec{Name: "weekofyear", MinArgs: 1, MaxArgs: 1, SQLite: "strftime('%%W', %s)"})
+
+	// --- DateTime boundaries ---
+	add(Spec{Name: "startofday", MinArgs: 1, MaxArgs: 2, SQLite: "date(%s)"})
+	add(Spec{Name: "startofmonth", MinArgs: 1, MaxArgs: 2, SQLite: "date(%s, 'start of month')"})
+	add(Spec{Name: "startofhour", MinArgs: 1, MaxArgs: 2, SQLite: "strftime('%%Y-%%m-%%dT%%H:00:00', %s)"})
+	add(Spec{Name: "startofweek", MinArgs: 1, MaxArgs: 2, SQLite: "date(%s, '-6 days', 'weekday 0')"})
+	add(Spec{Name: "startofyear", MinArgs: 1, MaxArgs: 2, SQLite: "date(%s, 'start of year')"})
+	add(Spec{Name: "endofday", MinArgs: 1, MaxArgs: 2, SQLite: "datetime(%s, '+23 hours', '+59 minutes', '+59 seconds')"})
+	add(Spec{Name: "endofmonth", MinArgs: 1, MaxArgs: 2, SQLite: "date(%s, 'start of month', '+1 month', '-1 day')"})
+	add(Spec{Name: "endofweek", MinArgs: 1, MaxArgs: 2, SQLite: "date(%s, 'weekday 6')"})
+	add(Spec{Name: "endofyear", MinArgs: 1, MaxArgs: 2, SQLite: "date(%s, 'start of year', '+1 year', '-1 day')"})
+	add(Spec{Name: "format_datetime", MinArgs: 2, MaxArgs: 2, SQLite: "strftime(%s, %s)"})
+	add(Spec{Name: "format_timespan", MinArgs: 1, MaxArgs: 2, SQLite: "%s"})
+
+	// --- Misc string helpers ---
+	add(Spec{Name: "string_size", MinArgs: 1, MaxArgs: 1, SQLite: "length(%s)"})
+
+	// --- Conversion extras ---
+	add(Spec{Name: "todouble", MinArgs: 1, MaxArgs: 1, SQLite: "CAST(%s AS REAL)"})
+	add(Spec{Name: "todecimal", MinArgs: 1, MaxArgs: 1, SQLite: "CAST(%s AS REAL)"})
+	add(Spec{Name: "tohex", MinArgs: 1, MaxArgs: 1, SQLite: "printf('%%x', %s)"})
+
+	// --- Misc ---
+	add(Spec{Name: "between", MinArgs: 3, MaxArgs: 3, SQLite: "(%s >= %s AND %s <= %s)"})
+	add(Spec{Name: "isbetween", MinArgs: 3, MaxArgs: 3, SQLite: "(%s >= %s AND %s <= %s)"})
+	add(Spec{Name: "notempty", MinArgs: 1, MaxArgs: 1, SQLite: "(%s != '')"})
+
 	// --- String ---
 	add(Spec{Name: "tostring", MinArgs: 1, MaxArgs: 1, SQLite: "CAST(%s AS TEXT)"})
 	add(Spec{Name: "strcat", MinArgs: 1, MaxArgs: -1, SQLite: StrcatTpl}) // variadic → || chain

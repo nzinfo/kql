@@ -29,11 +29,11 @@
 | Phase | 缺失子目标 | 影响 |
 |---|---|---|
 | **F5** binder | S1 无 scope stack/symbol 类型；S7 无 StrictMode | 低：~~S4 类型推断已完成（KQL002 warning）~~；~~S6 函数校验已完成（KQL003/KQL004 warning）~~ |
-| **F7** builtin | S1 Spec 缺 Params/ReturnType/Kind；S2 仅 ~103 函数（g4 有 380+）；S3 无 docs/capabilities.md | 中：高频函数覆盖好；低频函数按需补 |
+| **F7** builtin | S1 Spec 缺 Params/ReturnType/Kind；S2 ~134 函数（g4 有 380+）；~~S3 无 docs~~ → capabilities.md/backend-differences.md 已落地 | 低：高频函数覆盖好 |
 | **I2** translate | S4 FuncCall.Caps 用 DefaultCaps 不查 F7 表；S5 无 KQL010+ 码；S6 无 .ir golden | 低：Caps 在 emit 层按 catalog 查；golden 是 SQL 级 |
 | **I3** 投影列追踪 | 全部缺失（capabilities.md / projection.go / CTE 边界重绑定） | 中：CTE 边界决策靠经验而非系统追踪 |
 | **I4** IR pretty-print | ~~S1 在 cmd/kql~~ → `ir.Print/Sprint/DescribeExpr` 已移入库；S2 无 YAML dump | 低 |
-| **I5** 等价性框架 | 全部缺失（canonical.go / equiv.go / IR golden） | 中：依赖 SQL golden + e2e 等价性间接覆盖 |
+| **I5** 等价性 | ~~全部缺失~~ → Canonicalize + Equivalent 已落地 | 低 |
 | **O3** 决策 | ~~S1/S2 无 AltPlan/PhysicalPlanner~~ → AltPlan + JoinPlan 已落地（O4）；仅余 O3.S3 谓词排序的 Explain 代价数字缺失 | 低 |
 | **O5** 基准 | S1 无 IR+cost dump；S4 explain 无前后代价数字 | 低：有 optimizer vs parse 时间基准 |
 | **B1** 后端框架 | S2 无 sqlbuild 包；S3 无 PhysicalStep（直连 IR）；S5 无 types.go | 中：架构简化（DESIGN 对齐但非完整 PhysicalPlan） |
@@ -49,8 +49,7 @@
 |---|---|---|
 | **O6** 高级规则 | ViewMatch/两阶段聚合/采样预过滤 | 中 |
 | **B6** UDF | pg plpgsql / duckdb UDF / UDF 生命周期 | 低（UDF-STRATEGY.md 分析了只有 3 类需要） |
-| **T2** 语料提取 | 无分类目录 / 无 sanitization-rules.yaml / 无 NOTICE | 低 |
-| 文档 | capabilities.md / backend-differences.md / stats-pg-mapping.md / perf-baseline.md | 低 |
+| stats-pg-mapping.md / perf-baseline.md | 低 |
 
 ## 二、金标准 Grammar 对齐
 

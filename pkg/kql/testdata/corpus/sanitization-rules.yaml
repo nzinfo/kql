@@ -1,0 +1,78 @@
+# Sanitization rules for extracting KQL queries from customer/prod environments.
+#
+# When collecting KQL queries from real deployments for the test corpus or
+# benchmark suite, apply these rules to strip sensitive data before committing.
+# Used by the corpus-collection tooling (future cmd/kql-collect-corpus).
+#
+# Rules are applied in order. Each rule matches a regex and replaces the match
+# with the specified placeholder.
+
+version: "1"
+description: "Strip PII/secrets before adding queries to the corpus"
+
+rules:
+  # --- GUIDs/tenant IDs → placeholder ---
+  - name: tenant_id
+    match: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    replace: "<GUID>"
+
+  # --- Email addresses ---
+  - name: email
+    match: '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    replace: "<EMAIL>"
+
+  # --- IP addresses (keep 0.0.0.0/127.0.0.1 which are non-sensitive) ---
+  - name: ip_address
+    match: '\b(?!0\.0\.0\.0|127\.0\.0\.1)(?:\d{1,3}\.){3}\d{1,3}\b'
+    replace: "<IP>"
+
+  # --- Connection strings with credentials ---
+  - name: connection_string
+    match: '(?:Server|Data Source|Host)=[^;]*(?:Password|Pwd)=[^;]*'
+    replace: "<CONN_STRING>"
+
+  # --- Bearer tokens / API keys ---
+  - name: bearer_token
+    match: '(?i)Bearer\s+[A-Za-z0-9._-]{20,}'
+    replace: "<TOKEN>"
+
+  - name: api_key
+    match: '(?i)(api[_-]?key|secret)\s*[:=]\s*["\x27]?[A-Za-z0-9/+_-]{16,}'
+    replace: "<API_KEY>"
+
+  # --- Specific table names that might reveal internal schema ---
+  - name: internal_table
+    match: '(?i)\b(Customer|Patient|Employee|Payroll|Salary)sTable\b'
+    replace: "InternalTable"
+
+  # --- Account/UPN patterns (domain\user or user@domain) ---
+  - name: domain_user
+    match: '[A-Z][A-Z0-9-]*\\[a-zA-Z0-9._-]+'
+    replace: "<DOMAIN>\\<USER>"
+
+  # --- File paths with usernames ---
+  - name: user_path
+    match: '(?i)/(?:home|Users)/[a-zA-Z0-9._-]+'
+    replace: "/home/<USER>"
+
+# Tables that are always safe to include (generic event-log names).
+safe_tables:
+  - SecurityEvent
+  - Syslog
+  - ProcessCreationEvents
+  - AzureActivity
+  - SigninLogs
+  - AuditLogs
+  - events
+  - meta
+
+# Patterns that should cause a query to be REJECTED (not sanitized) because
+# they contain irreducible sensitive data (e.g. inline JSON with PII).
+reject_patterns:
+  - name: inline_pii_json
+    match: '"(?i)(ssn|social_security|credit_card|bank_account)"\s*:'
+    reason: "query contains inline PII — reject rather than sanitize"
+
+  - name: hardcoded_secret_literal
+    match: '(?i)(password|secret|token)\s*==\s*["\x27][^"\x27]{8,}'
+    reason: "query compares against a hardcoded secret — reject"
