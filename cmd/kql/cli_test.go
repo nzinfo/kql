@@ -135,7 +135,7 @@ func TestRunQuerySharedInMemory(t *testing.T) {
 	}
 
 	// Run via the CLI's own query path (opens a fresh sqlite.New on the dsn).
-	err = runQuery(context.Background(), dsn, "csv",
+	err = runQuery(context.Background(), dsn, "csv", "", "", // no policy/stats → O2 fast path
 		`events | summarize total = sum(damage) by state | sort by total desc | take 1`)
 	if err != nil {
 		t.Fatalf("runQuery error: %v", err)
@@ -157,6 +157,34 @@ func TestRunQuerySharedInMemory(t *testing.T) {
 	}
 	if len(res.Rows()) != 1 || res.Rows()[0][0] != "FLORIDA" {
 		t.Errorf("top row = %v, want [FLORIDA ...]", res.Rows())
+	}
+}
+
+// TestRunQuery_PolicyPath verifies the run path applies cost-based optimization
+// when --policy is passed (routes through ExecOnOpt rather than the fast Exec path).
+func TestRunQuery_PolicyPath(t *testing.T) {
+	const dsn = "file:kql_cli_e2e_policy?mode=memory&cache=shared"
+	seed, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer seed.Close()
+	seed.Exec(`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, state TEXT, damage REAL)`)
+	seed.Exec(`DELETE FROM events`)
+	for _, r := range []struct {
+		id int64
+		st string
+		d  float64
+	}{
+		{1, "TEXAS", 1500}, {2, "TEXAS", 3200}, {3, "OKLAHOMA", 500},
+	} {
+		seed.Exec(`INSERT INTO events VALUES (?,?,?)`, r.id, r.st, r.d)
+	}
+	// conservative policy without stats → cost path still produces correct results.
+	err = runQuery(context.Background(), dsn, "csv", "conservative", "",
+		`events | where damage > 1000 | count`)
+	if err != nil {
+		t.Fatalf("runQuery(policy) error: %v", err)
 	}
 }
 

@@ -87,7 +87,8 @@ func run(args []string) error {
 	fs.SetOutput(os.Stderr)
 	dsn := fs.String("d", "", "data source (sqlite dsn, e.g. :memory: or a .db path)")
 	format := fs.String("o", "csv", "output format: csv | json | table")
-	_ = fs.String("policy", "conservative", "optimizer decision policy: conservative | aggressive | gated (affects explain only)")
+	policyName := fs.String("policy", "", "optimizer decision policy: conservative | aggressive | gated (empty = rules-only)")
+	statsPath := fs.String("stats", "", "path to stats catalog YAML (enables cost-based optimization)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -99,7 +100,7 @@ func run(args []string) error {
 	if *dsn == "" {
 		return errors.New("missing -d <dsn>")
 	}
-	return runQuery(context.Background(), *dsn, *format, query)
+	return runQuery(context.Background(), *dsn, *format, *policyName, *statsPath, query)
 }
 
 // flagStr scans args for a -name <value> pair (name without leading "-") and
@@ -120,9 +121,25 @@ func flagStr(args []string, name, def string) string {
 }
 
 // runQuery executes a KQL query against the backend selected by the dsn scheme
-// (postgres:// → pg; anything else → sqlite) and prints rows.
-func runQuery(ctx context.Context, dsn, format, query string) error {
-	res, err := kql.Exec(ctx, dsn, query)
+// (postgres:// → pg; anything else → sqlite) and prints rows. When policy or
+// statsPath is non-empty, applies cost-based optimization (O3/O4) in addition
+// to the always-safe O2 rewrite rules.
+func runQuery(ctx context.Context, dsn, format, policy, statsPath, query string) error {
+	if policy == "" && statsPath == "" {
+		// Fast path: no cost-based optimization — only O2 rules (kql.Exec).
+		res, err := kql.Exec(ctx, dsn, query)
+		if err != nil {
+			return err
+		}
+		return printResult(os.Stdout, res, format)
+	}
+	// Cost-based path: open backend + apply O2 rules + O3/O4 decisions.
+	bk, err := kql.OpenBackend(dsn)
+	if err != nil {
+		return err
+	}
+	defer bk.Close()
+	res, err := kql.ExecOnOpt(ctx, bk, query, kql.ExecOpt{Policy: kql.Policy(policy), StatsPath: statsPath})
 	if err != nil {
 		return err
 	}

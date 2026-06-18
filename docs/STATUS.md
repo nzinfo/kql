@@ -123,7 +123,7 @@ KQL 文本
 | datatable 数据物化 | `datatable(...)[data]` 目前占位 SourceTable | 低 |
 | PostProc 框架 | NeedsPostProc 函数的客户端计算（mv-expand/parse/series） | 中 |
 | 类型推断 | Col.T 仍 Unknown（binder 只绑 ID+物理名） | 中 |
-| --stats 进 run 路径 | 当前 --stats 只影响 explain，不影响 Exec | 低 |
+| --stats 进 run 路径 | ✅ **已完成**（commit 8859ec6 后）：run 路径现支持 --policy/--stats，经 ExecOnOpt 应用 O3/O4 代价优化 | 已完成 |
 | 统计采集脚本 | O0.S6 pg 采集（cmd/kql-collect-pg-stats） | 低 |
 
 ## 10. 下一批候选方向
