@@ -38,6 +38,7 @@ type emitter struct {
 	nextIdx int
 	args    map[int]interface{}
 	postProc map[string]bool
+	catalog  interface{} // *stats.Catalog or nil (cost-based CTE materialization)
 }
 
 func newEmitter() *emitter { return &emitter{args: map[int]interface{}{}, postProc: map[string]bool{}} }

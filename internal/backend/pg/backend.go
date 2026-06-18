@@ -14,6 +14,7 @@ import (
 	"nzinfo/kql/internal/backend"
 	"nzinfo/kql/internal/frontend/binder"
 	"nzinfo/kql/internal/ir"
+	"nzinfo/kql/internal/optimizer/stats"
 )
 
 // Backend is a backend.Backend backed by PostgreSQL via pgx.
@@ -24,6 +25,10 @@ type Backend struct {
 	// table within a session. Schema is immutable during a session (DDL during
 	// query execution is not supported). Keyed by table name (lowercased).
 	schemaCache sync.Map
+
+	// catalog is the optional stats catalog for cost-based emit decisions
+	// (CTE materialization). Set by the optimizer via SetCatalog; nil → static.
+	catalog *stats.Catalog
 }
 
 // New opens a PostgreSQL database. dsn is a pg connection string, e.g.
@@ -53,7 +58,17 @@ func (b *Backend) Dialect() backend.Dialect { return backend.DialectPostgres }
 
 // Emit translates an IR Pipeline into a pg Query. Uses the CTE-merged emit
 // path (production); falls back to nested emit for unhandled cases.
-func (b *Backend) Emit(pipe *ir.Pipeline) (*backend.Query, error) { return EmitCTE(pipe) }
+// SetCatalog wires a stats catalog for cost-based emit decisions (O6 CTE
+// materialization). Optional: when set, the emitter uses cost-based
+// MATERIALIZED hints; when nil, it falls back to the static stage-type rule.
+func (b *Backend) SetCatalog(c *stats.Catalog) { b.catalog = c }
+
+func (b *Backend) Emit(pipe *ir.Pipeline) (*backend.Query, error) {
+	if b.catalog != nil {
+		return EmitCTEWithCatalog(pipe, b.catalog)
+	}
+	return EmitCTE(pipe)
+}
 
 // Exec runs the Query and returns the rowset.
 func (b *Backend) Exec(ctx context.Context, q *backend.Query) (*backend.Result, error) {

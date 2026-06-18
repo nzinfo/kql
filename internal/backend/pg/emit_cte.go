@@ -9,6 +9,8 @@ import (
 
 	"nzinfo/kql/internal/backend"
 	"nzinfo/kql/internal/ir"
+	"nzinfo/kql/internal/optimizer/decision"
+	"nzinfo/kql/internal/optimizer/stats"
 )
 
 // EmitCTE translates an IR Pipeline into a CTE-based pg backend.Query.
@@ -17,6 +19,22 @@ func EmitCTE(pipe *ir.Pipeline) (*backend.Query, error) {
 		return nil, fmt.Errorf("nil pipeline")
 	}
 	e := newEmitter()
+	sql, err := e.emitPipelineCTE(pipe)
+	if err != nil {
+		return Emit(pipe) // fallback to nested emit
+	}
+	return &backend.Query{SQL: sql, Args: e.orderedArgs()}, nil
+}
+
+// EmitCTEWithCatalog is the cost-based variant: the emitter carries a stats
+// catalog so cteMaterialization can make cost-based MATERIALIZED decisions
+// (O6). When catalog is nil this is equivalent to EmitCTE.
+func EmitCTEWithCatalog(pipe *ir.Pipeline, catalog *stats.Catalog) (*backend.Query, error) {
+	if pipe == nil {
+		return nil, fmt.Errorf("nil pipeline")
+	}
+	e := newEmitter()
+	e.catalog = catalog
 	sql, err := e.emitPipelineCTE(pipe)
 	if err != nil {
 		return Emit(pipe) // fallback to nested emit
@@ -87,7 +105,7 @@ func (e *emitter) emitPipelineCTE(pipe *ir.Pipeline) (string, error) {
 		// small mergeable stages (Filter/Sort/Limit) benefit from inlining
 		// (NOT MATERIALIZED → pg can flatten the CTE into the outer query).
 		// Only emitted for pg 14+ (earlier versions ignore the keyword safely).
-		matHint := cteMaterialization(seg)
+		matHint := e.cteMaterialization(seg, pipe.Source)
 		cteParts = append(cteParts, fmt.Sprintf("%s AS%s (%s)", cteName, matHint, segSQL))
 		prevCTE = cteName
 	}
@@ -322,13 +340,31 @@ func joinHintPG(hint ir.JoinHint, leftAlias, rightAlias string) string {
 		return "" // JoinHintNone, JoinHintIndexLookup, or unknown → no hint
 }
 
-// cteMaterialization returns the pg 14+ MATERIALIZED hint for a CTE segment
-// (B3.S4). Aggregate/Join stages produce large result sets → MATERIALIZED
-// (force pg to compute + cache). Filter/Sort/Limit stages are cheap →
-// NOT MATERIALIZED (let pg inline/flatten). The optimizer decides; this is the
-// emit-side rendering. Returns "" for pg < 14 compatibility (no keyword =
-// pg's default behavior).
-func cteMaterialization(seg pgSegment) string {
+// cteMaterialization returns the pg 14+ MATERIALIZED hint for a CTE segment.
+// When the emitter has a stats catalog (cost-based path, O6), it consults
+// decision.ShouldMaterialize for a cost-based refinement of the static rule.
+// Otherwise it uses the static stage-type heuristic (B3.S4): Aggregate/Join →
+// MATERIALIZED, Filter/Sort/Limit → NOT MATERIALIZED. Returns "" for pg < 14
+// compatibility (no keyword = pg's default behavior).
+func (e *emitter) cteMaterialization(seg pgSegment, source ir.Source) string {
+	// Cost-based path: if a catalog is wired, ask the optimizer.
+	if e.catalog != nil {
+		if cat, ok := e.catalog.(*stats.Catalog); ok {
+			src := ""
+			if st, ok := source.(*ir.SourceTable); ok {
+				src = st.Table
+			}
+			hint := decision.ShouldMaterialize(cat, src, seg.stages)
+			switch hint {
+			case decision.MatForceMaterialize:
+				return " MATERIALIZED"
+			case decision.MatForceInline:
+				return " NOT MATERIALIZED"
+			}
+			// MatDefault → fall through to static rule below.
+		}
+	}
+	// Static stage-type heuristic (the B3.S4 default).
 	if len(seg.stages) == 1 {
 		switch seg.stages[0].(type) {
 		case *ir.Aggregate, *ir.Join:

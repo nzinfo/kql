@@ -335,6 +335,12 @@ func ExecOnOpt(ctx context.Context, bk backend.Backend, query string, opt ExecOp
 			}
 			ruleSet = append(ruleSet, rules.TwoStageAgg{Catalog: catalog})
 		}
+		// Wire the catalog into the backend for cost-based emit decisions
+		// (pg CTE materialization, O6). Best-effort: backends without
+		// SetCatalog ignore this.
+		if sa, ok := bk.(interface{ SetCatalog(*stats.Catalog) }); ok {
+			sa.SetCatalog(catalog)
+		}
 	}
 	rules.NewEngine(ruleSet...).Optimize(pipe)
 	// Cost-based decisions (opt-in).
