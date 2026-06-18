@@ -23,7 +23,7 @@
 - **B5** sqlite 后端（modernc 驱动/CTE emit）
 - **B7** 快照测试（48 golden + 等价性）
 - **S6** CI 工作流（.github/workflows/ci.yml: 3-OS test matrix + pg-e2e job + O4 graceful-degrade）
-- **T1/T3/T5** 语料（90 真实查询 100% / corpus regression / fuzz stress）
+- **T1/T3/T5** 语料（90 真实查询 100% / **kqlparser grammar 207/207 = 100%** / corpus regression / fuzz stress）
 
 ### ✅ 完全实现（2026-06-17 更新 — 原 partial 全部补齐）
 | Phase | 状态 |
@@ -79,8 +79,6 @@
 ### ⚠️ 缺失但低频（0/90 语料）
 | 缺失 | g4 规则 | 真实频率 | 修复难度 |
 |---|---|---|---|
-| `\| search Kind` | searchOperator (piped) | 中 | 中（特殊搜索语法） |
-| `mv-apply` | mvapplyOperator | 低中 | 低（类似 mv-expand） |
 | 通配符表名 `App*` | wildcardedName | 低中（union 常用） | 中 |
 | graph-* 算子（5个） | graphMatch/make-graph/... | 低（上升中） | 中（图模式语法） |
 | `restrict access`/`alias database`/`declare pattern` | 3 个语句 | 极低 | 低 |
@@ -129,3 +127,7 @@
 - ✅ **S2.S2 schema.go** — Schema/ColumnDesc 描述。
 - ✅ **S5.S6 README** — cmd/kql/README.md。
 - ✅ **T4.S2/S3 golden** — IR golden 测试框架。
+- ✅ **金标准 Grammar 完全对齐** — 20 个 P2/P3 算子 AST+parser（print/range/find/sample/lookup/
+  scan/fork/facet/reduce/top-hitters/partition/macro-expand/execute-and-cache/assert-schema/graph-*）
+  + 通用 lparenStartsPipeline 修复（操作符形式子查询检测，side-effect-free lookahead）。
+  **kqlparser grammar corpus 207/207 = 100%**（独立维护的语法测试套件全通过）。
