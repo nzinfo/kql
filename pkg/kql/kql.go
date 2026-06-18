@@ -346,6 +346,10 @@ func ExecOnOpt(ctx context.Context, bk backend.Backend, query string, opt ExecOp
 			po.Table = src.Table
 		}
 		po.Apply(pipe)
+		// Multi-table join order (O4 extension): reorder chains of commutable
+		// joins to the lowest-cost left-deep order BEFORE JoinPlan, so physical-
+		// method hints match the reordered joins.
+		decision.ApplyJoinOrder(pipe, catalog, cost.DefaultWeights(bk.Dialect().String()))
 		jp := decision.JoinPlan{Policy: pol, Catalog: catalog, Weights: cost.DefaultWeights(bk.Dialect().String())}
 		jp.Apply(pipe)
 	}

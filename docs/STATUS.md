@@ -117,7 +117,7 @@ KQL 文本
 |---|---|---|
 | O3 PhysicalPlanner | 系统化物理方案枚举(HashJoin/NestedLoop/IndexedLookup) | 中 |
 | duckdb 后端 | 第三个后端（分析加速） | 中 |
-| O6 高级规则 | CTE 断点决策、join 顺序重排 | 中 |
+| O6 高级规则 | CTE 断点决策（待）；**join 顺序重排已完成**（left-deep System-R DP，可交换 join 链重排，commit 见 log） | 中 |
 | 更多 builtin 函数 | ✅ **已对齐**：433 catalog names 覆盖 kqlparser 全部 386 标量+39 聚合（commit 026332a/2c70efe/76482f2/206e9a1） | 已完成 |
 | lambda 调用语义 | `let f=(x){...}` 目前只解析不调用 | 低 |
 | datatable 数据物化 | `datatable(...)[data]` 目前占位 SourceTable | 低 |
