@@ -41,4 +41,12 @@ const (
 
 	// ResourceNotFound covers missing tables/databases/functions at bind time.
 	ResourceNotFound Code = "KQL008"
+
+	// TranslationError covers IR translation failures: unsupported constructs
+	// that parse but can't be represented in the IR (I2.S5).
+	TranslationError Code = "KQL200"
+
+	// UnsupportedFeature covers constructs that translate but have no backend
+	// emit path (pass-through with a warning rather than a hard error).
+	UnsupportedFeature Code = "KQL201"
 )

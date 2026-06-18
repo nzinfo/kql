@@ -1,105 +1,80 @@
-# kql — KQL query tool (prototype)
+# kql — command-line KQL query tool
 
-A command-line interface for running **Kusto Query Language (KQL)** queries
-against a SQLite database. This is the prototype CLI for the `nzinfo/kql` project.
+A command-line interface for the nzinfo/kql Kusto Query Language engine.
+Parses KQL, translates to IR, optimizes, and executes against PostgreSQL
+(production), DuckDB (analytics), or SQLite (prototype/test).
 
-> **Status:** prototype. Only the SQLite backend is wired (sqlite is positioned
-> as a prototype/test backend; PostgreSQL is the production target — see the
-> project root `DESIGN.md`). P0 KQL operators are supported.
+## Installation
 
-## Build
-
-```bash
-go build -o kql ./cmd/kql
+```sh
+go install nzinfo/kql/cmd/kql@latest
 ```
 
 ## Usage
 
-```
-kql — KQL query tool (prototype; sqlite backend)
+### Run a query
 
-Usage:
-  kql -d <dsn> '<query>'                            Run a query, print rows (default: csv)
-  kql -d <dsn> -o json '<query>'                    Run, print as JSON
-  kql -d <dsn> [--policy <p>] explain '<query>'    Parse+optimise, print IR + SQL + decision log (no exec)
-  kql validate '<query>'                            Parse only, print diagnostics
-  kql -h | --help                                   This help
+```sh
+# Against SQLite (in-memory, for testing)
+kql -d ":memory:" 'datatable(Name:string, Age:long)[("Alice",30),("Bob",25)] | where Age > 20 | sort by Name'
 
-Options:
-  -d <dsn>       Data source (sqlite dsn: :memory:, file:path.db, or a .db path; postgres://... for pg)
-  -o <format>    Output format: csv (default) | json | table
-  --policy <p>   Optimizer decision policy for explain: conservative (default) | aggressive | gated
+# Against PostgreSQL (production)
+kql -d "postgres://user:pass@localhost:5432/db" 'events | where state == "TX" | count'
+
+# Against DuckDB (analytics)
+kql -d "duckdb:///path/to/data.duckdb" 'SELECT * FROM sales'
 ```
 
-## Examples
+### Output formats
 
-Run a query against a SQLite file, default CSV output:
-
-```bash
-$ kql -d events.db 'StormEvents | where State == "TEXAS" | take 3'
-State,DamagedProperty,EventType
-TEXAS,1500,Hail
-TEXAS,3200,Wind
-TEXAS,100,Hail
+```sh
+kql -d "$DSN" -o csv  'query'   # default: comma-separated values
+kql -d "$DSN" -o json 'query'   # JSON array of objects
+kql -d "$DSN" -o table 'query'  # aligned table
 ```
 
-JSON output:
+### Explain (optimization decisions)
 
-```bash
-$ kql -d events.db -o json 'events | summarize total = sum(Damage) by State | sort by total desc | take 1'
-[
-  {
-    "State": "FLORIDA",
-    "total": 9000
-  }
-]
+```sh
+# Show the IR pipeline tree + generated SQL + optimization decisions
+kql explain -d "$DSN" --policy aggressive --stats catalog.yaml 'events | join (meta) on $left.id == $right.id'
+
+# Policies: conservative (default, safe), aggressive (cost-optimized), gated (confidence-based)
 ```
 
-Inspect the generated SQL and IR (no execution):
+The explain output shows:
+- The IR pipeline tree (source → stages)
+- The generated SQL (with pg_hint_plan comments for join methods)
+- Optimization decisions (predicate ordering + join plan selection rationale)
 
-```bash
-$ kql -d events.db explain 'events | where x > 0 | summarize c = count() by state | sort by c desc | take 5'
-# IR Pipeline
-Pipeline
-  Source: Table "events"
-  Filter
-    where (Col("x") > long(0))
-  Aggregate (1 aggs, 1 keys)
-    agg c = count() [agg]
-    by Col("state")
-  Sort (1 keys)
-    key Col("c") (desc)
-  Limit
-    take long(5)
+### Validate (syntax check without execution)
 
-# Emitted SQL (sqlite)
-SELECT * FROM (SELECT * FROM (...) ORDER BY _k0."c" DESC) AS _k0 LIMIT ?1
+```sh
+kql validate 'T | where x > 0 | summarize c = count() by g'
 ```
 
-Validate a query without a database:
+## Flags
 
-```bash
-$ kql validate 'events | where'
-events:1:15: KQL005: unexpected end of input
+| Flag | Description |
+|---|---|
+| `-d, --dsn` | Database connection string |
+| `-o, --output` | Output format: csv (default), json, table |
+| `--policy` | Optimizer policy: conservative, aggressive, gated |
+| `--stats` | Path to stats catalog YAML (for cost-based optimization) |
+| `--format` | Explain output format: text (default), yaml |
 
-$ kql validate 'events | take 1'
-OK
+## Stats catalog
+
+Generate a stats catalog from PostgreSQL for cost-based optimization:
+
+```sh
+# Collect stats from a real pg database
+go run cmd/kql-collect-pg-stats/main.go -d "$PG_DSN" -o stats.yaml
+
+# Use it for join-method optimization
+kql explain -d "$DSN" --policy aggressive --stats stats.yaml 'query'
 ```
 
-## Supported KQL (P0)
-
-Operators: `where` (alias `filter`), `project`, `extend`, `take` (`limit`),
-`sort by` (`order by`), `summarize … by`, `join kind=…`, `union`, `distinct`,
-`count`, `top`, `let`.
-
-Expressions: arithmetic, comparison, logical (`and`/`or`), string operators
-(`has`/`contains`/`startswith`/…), `in`/`!in`, `between`/`!between`, function
-calls (incl. aggregates `count`/`sum`/`avg`/`min`/`max`/…, `iff`, casts),
-member/index access, string/datetime/timespan/guid/bool literals.
-
-## Notes
-
-- The SQLite driver is `modernc.org/sqlite` (pure Go, CGO-free) — chosen for the
-  prototype loop. The production PostgreSQL backend uses `pgx`.
-- See the project root `DESIGN.md`, `claude.md`, and `docs/PROGRESS.md` for the
-  overall architecture and roadmap.
+The optimizer's O4 Join AltPlan uses the catalog to select the best join
+method (HashJoin/NestLoop/MergeJoin/IndexLookup) and emits pg_hint_plan
+hints. Hints degrade gracefully (ignored if pg_hint_plan isn't installed).

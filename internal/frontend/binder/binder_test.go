@@ -573,3 +573,64 @@ func TestInfer_TimespanArithmetic(t *testing.T) {
 		t.Errorf("timespan + timespan: got %v, want timespan", got)
 	}
 }
+
+
+// --- F5.S1 scope tests ---
+
+func TestScope_LookupAndShadow(t *testing.T) {
+	global := NewScope(nil)
+	global.Bind(&Symbol{Name: "x", Kind: SymScalar, Type: ir.TypeLong})
+	child := NewScope(global)
+	child.Bind(&Symbol{Name: "x", Kind: SymScalar, Type: ir.TypeString})
+
+	// Child shadows parent.
+	sym, ok := child.Lookup("x")
+	if !ok || sym.Type != ir.TypeString {
+		t.Errorf("child lookup: got %v ok=%v, want string", sym, ok)
+	}
+	// Global still has the original.
+	sym, ok = global.Lookup("x")
+	if !ok || sym.Type != ir.TypeLong {
+		t.Errorf("global lookup: got %v ok=%v, want long", sym, ok)
+	}
+	// Local only sees the child's binding.
+	sym, ok = child.Local("x")
+	if !ok || sym.Type != ir.TypeString {
+		t.Errorf("local: got %v ok=%v, want string", sym, ok)
+	}
+}
+
+func TestScope_NotFound(t *testing.T) {
+	s := NewScope(nil)
+	if _, ok := s.Lookup("missing"); ok {
+		t.Error("expected not-found")
+	}
+}
+
+// --- F5.S7 strict mode tests ---
+
+func TestStrictMode_EscalatesWarning(t *testing.T) {
+	pipe := &ir.Pipeline{
+		Source: src("t"),
+		Stages: []ir.Stage{
+			&ir.Extend{Cols: []*ir.NamedExpr{
+				{Name: "r", Expr: &ir.FuncCall{Name: "my_unknown_udf", Args: []ir.Expr{col("id")}}},
+			}},
+		},
+	}
+	prov := &fakeProvider{tables: map[string][]ColBinding{"t": cols("id")}}
+
+	// Non-strict: KQL003 is a warning, no errors.
+	var diagsNS diagnostic.List
+	BindWith(pipe, prov, &diagsNS, Options{Strict: false})
+	if diagsNS.HasErrors() {
+		t.Errorf("non-strict should have no errors: %v", diagsNS.Render())
+	}
+
+	// Strict: KQL003 escalates to error.
+	var diagsS diagnostic.List
+	BindWith(pipe, prov, &diagsS, Options{Strict: true})
+	if !diagsS.HasErrors() {
+		t.Errorf("strict should escalate KQL003 to error: %v", diagsS.Render())
+	}
+}

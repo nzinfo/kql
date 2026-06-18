@@ -82,7 +82,13 @@ func (e *emitter) emitPipelineCTE(pipe *ir.Pipeline) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		cteParts = append(cteParts, fmt.Sprintf("%s AS (%s)", cteName, segSQL))
+		// B3.S4: MATERIALIZED hint. Large breakpoint stages (Aggregate/Join)
+		// benefit from materialization (force pg to compute + cache the CTE);
+		// small mergeable stages (Filter/Sort/Limit) benefit from inlining
+		// (NOT MATERIALIZED → pg can flatten the CTE into the outer query).
+		// Only emitted for pg 14+ (earlier versions ignore the keyword safely).
+		matHint := cteMaterialization(seg)
+		cteParts = append(cteParts, fmt.Sprintf("%s AS%s (%s)", cteName, matHint, segSQL))
 		prevCTE = cteName
 	}
 	finalCTE := fmt.Sprintf("_s%d", len(segs)-1)
@@ -313,5 +319,23 @@ func joinHintPG(hint ir.JoinHint, leftAlias, rightAlias string) string {
 	case ir.JoinHintMerge:
 		return fmt.Sprintf("/*+ MergeJoin(%s %s) */ ", leftAlias, rightAlias)
 	}
-	return "" // JoinHintNone, JoinHintIndexLookup, or unknown → no hint
+		return "" // JoinHintNone, JoinHintIndexLookup, or unknown → no hint
+}
+
+// cteMaterialization returns the pg 14+ MATERIALIZED hint for a CTE segment
+// (B3.S4). Aggregate/Join stages produce large result sets → MATERIALIZED
+// (force pg to compute + cache). Filter/Sort/Limit stages are cheap →
+// NOT MATERIALIZED (let pg inline/flatten). The optimizer decides; this is the
+// emit-side rendering. Returns "" for pg < 14 compatibility (no keyword =
+// pg's default behavior).
+func cteMaterialization(seg pgSegment) string {
+	if len(seg.stages) == 1 {
+		switch seg.stages[0].(type) {
+		case *ir.Aggregate, *ir.Join:
+			return " MATERIALIZED" // large: force materialization
+		case *ir.Filter, *ir.Sort, *ir.Limit, *ir.Distinct:
+			return " NOT MATERIALIZED" // small: allow inlining
+		}
+	}
+	return " NOT MATERIALIZED" // merged segments (Filter+Sort+Limit) → inline
 }

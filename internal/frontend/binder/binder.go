@@ -78,14 +78,30 @@ type SchemaProvider interface {
 // backend's physical name. Unknown columns produce KQL001 diagnostics. Returns
 // the pipeline (mutated in place) — the binder is a resolver/rewriter.
 func Bind(pipe *ir.Pipeline, prov SchemaProvider, diags *diagnostic.List) (*ir.Pipeline, error) {
-	b := &binder{prov: prov, diags: diags}
+	return BindWith(pipe, prov, diags, Options{})
+}
+
+// BindWith is the configurable entry point (F5.S7). Options control strictness:
+// Strict=true escalates KQL001/KQL003 from warnings to errors.
+func BindWith(pipe *ir.Pipeline, prov SchemaProvider, diags *diagnostic.List, opts Options) (*ir.Pipeline, error) {
+	b := &binder{prov: prov, diags: diags, opts: opts, scope: NewScope(nil)}
 	return b.bindPipeline(pipe)
+}
+
+// Options configures the binder (F5.S7 strict mode).
+type Options struct {
+	// Strict escalates warnings (KQL002/KQL003/KQL004) to errors, blocking
+	// execution. Default false — KQL's dynamic type system means warnings are
+	// advisory, not blocking.
+	Strict bool
 }
 
 type binder struct {
 	prov  SchemaProvider
 	diags *diagnostic.List
+	opts  Options
 	next  ir.ColID // ColID allocator counter (1-based; 0 = Invalid)
+	scope *Scope   // F5.S1 scope stack (let-bindings + columns)
 }
 
 // alloc assigns a fresh ColID.
@@ -361,6 +377,13 @@ func (b *binder) checkFuncCall(n *ir.FuncCall) {
 			"function %q called with %d arg(s); expected %s",
 			n.Name, argc, arityRange(spec.MinArgs, spec.MaxArgs))
 	}
+	// I2.S4: fill Caps from the F7 Spec table so the emit layer knows whether
+	// this function NeedsPostProc (e.g. split, percentile, make-series). The
+	// translator sets Caps via DefaultCaps(name, isAgg) which doesn't know about
+	// PostProc — we enrich it here after the catalog lookup.
+	if spec.NeedsPostProc {
+		n.Caps.NeedsPostProc = true
+	}
 }
 
 // arityRange renders a human-readable arity spec for KQL004 messages.
@@ -387,12 +410,19 @@ func (b *binder) errorf(pos token.Pos, format string, args ...interface{}) {
 }
 
 // diagAt records a diagnostic with a caller-chosen code and severity. Used for
-// KQL003/KQL004 (function validation) which are WARNINGS — they must not block
-// execution, because unknown functions are frequently user-defined (via let)
-// and the emit layer handles them via best-effort pass-through.
+// KQL002/KQL003/KQL004 which are WARNINGS by default — they must not block
+// execution, because KQL's dynamic type system means unknown functions/types
+// may resolve at runtime and the emit layer handles them via best-effort
+// pass-through.
+//
+// In StrictMode (F5.S7), warnings escalate to errors so the caller can enforce
+// rigor (e.g. CI validation pipelines).
 func (b *binder) diagAt(pos token.Pos, sev diagnostic.Severity, code diagnostic.Code, format string, args ...interface{}) {
 	if b.diags == nil {
 		return
+	}
+	if b.opts.Strict && sev == diagnostic.Warning {
+		sev = diagnostic.Error
 	}
 	b.diags.Add(diagnostic.Diagnostic{
 		Severity: sev,

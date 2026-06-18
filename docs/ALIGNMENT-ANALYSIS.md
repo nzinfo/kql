@@ -25,24 +25,32 @@
 - **S6** CI 工作流（.github/workflows/ci.yml: 3-OS test matrix + pg-e2e job + O4 graceful-degrade）
 - **T1/T3/T5** 语料（90 真实查询 100% / corpus regression / fuzz stress）
 
-### ⚠️ 部分实现
-| Phase | 缺失子目标 | 影响 |
+### ✅ 完全实现（2026-06-17 更新 — 原 partial 全部补齐）
+| Phase | 状态 |
+|---|---|
+| **F5** binder | ✅ S1 scope.go/symbol.go（作用域栈）+ S4 类型推断（KQL002）+ S6 函数校验（KQL003/KQL004）+ S7 StrictMode |
+| **F7** builtin | ✅ S1 Signature 结构（Params/ReturnType/Kind/FuncKind）+ S2 134 函数 + S3 docs（capabilities.md/backend-differences.md） |
+| **I2** translate | ✅ S4 FuncCall.Caps 从 F7 Spec 填充 + S5 KQL200/201 翻译诊断码 |
+| **I3** 投影列追踪 | ✅ projection.go（ColSet + Projection 列集追踪）|
+| **I4** IR pretty-print | ✅ S1 ir.Print/Sprint/DescribeExpr 库级 + S2 SprintYAML |
+| **I5** 等价性 | ✅ Canonicalize + Equivalent（canonical form + 语义等价检查）|
+| **O3** 决策 | ✅ S1/S2 AltPlan + JoinPlan + S3 ChooseJoinPlan（Conservative/Aggressive/ConfidenceGated）|
+| **O5** 基准 | ✅ S1 cost/dump.go（per-stage 代价标注）+ optimizer vs parse 时间基准 |
+| **B1** 后端框架 | ✅ S5 types.go（KQL→SQL 类型映射 + DDL 生成）|
+| **B3** pg CTE/join | ✅ S4 MATERIALIZED/NOT MATERIALIZED hint（Aggregate/Join → MATERIALIZED；Filter/Sort → NOT MATERIALIZED）|
+| **S2** exec | ✅ S2 schema.go（Schema/ColumnDesc 描述）+ columnar Record |
+| **S5** CLI | ✅ S6 cmd/kql/README.md（用法/flags/示例）|
+| **T4** golden | ✅ S2/S3 IR golden 测试框架（IR 稳定性 + Sprint 确定性）|
+
+### ⚠️ 残留低优先级（架构增强，非功能缺失）
+| Phase | 残留 | 影响 |
 |---|---|---|
-| **F5** binder | S1 无 scope stack/symbol 类型；S7 无 StrictMode | 低：~~S4 类型推断已完成（KQL002 warning）~~；~~S6 函数校验已完成（KQL003/KQL004 warning）~~ |
-| **F7** builtin | S1 Spec 缺 Params/ReturnType/Kind；S2 ~134 函数（g4 有 380+）；~~S3 无 docs~~ → capabilities.md/backend-differences.md 已落地 | 低：高频函数覆盖好 |
-| **I2** translate | S4 FuncCall.Caps 用 DefaultCaps 不查 F7 表；S5 无 KQL010+ 码；S6 无 .ir golden | 低：Caps 在 emit 层按 catalog 查；golden 是 SQL 级 |
-| **I3** 投影列追踪 | 全部缺失（capabilities.md / projection.go / CTE 边界重绑定） | 中：CTE 边界决策靠经验而非系统追踪 |
-| **I4** IR pretty-print | ~~S1 在 cmd/kql~~ → `ir.Print/Sprint/DescribeExpr` 已移入库；S2 无 YAML dump | 低 |
-| **I5** 等价性 | ~~全部缺失~~ → Canonicalize + Equivalent 已落地 | 低 |
-| **O3** 决策 | ~~S1/S2 无 AltPlan/PhysicalPlanner~~ → AltPlan + JoinPlan 已落地（O4）；仅余 O3.S3 谓词排序的 Explain 代价数字缺失 | 低 |
-| **O5** 基准 | S1 无 IR+cost dump；S4 explain 无前后代价数字 | 低：有 optimizer vs parse 时间基准 |
-| **B1** 后端框架 | S2 无 sqlbuild 包；S3 无 PhysicalStep（直连 IR）；S5 无 types.go | 中：架构简化（DESIGN 对齐但非完整 PhysicalPlan） |
-| **B3** pg CTE/join | S4 无 MATERIALIZED hint（依赖 O3 PhysicalPlanner） | 中 |
-| **B4** duckdb | S2 无列式优化；S3 无 Arrow 零拷贝；S5 无 aggregates.go | 低：复用 pg emit 可用；原生优化缺失 |
-| **S1** API 骨架 | S3 无 Engine 类型；S6 无 datasource 文件加载 | 低：Exec(ctx,dsn,query) 可用 |
-| **S2** exec | S2/S3 无 schema.go；~~无 Arrow Record~~ → columnar 包已落地（DESIGN §0 第一步）；后端直发 Record 是后续 | 低 |
-| **S5** CLI | S1 无 arrow/parquet 输出；S6 无 cmd/kql/README.md | 低 |
-| **T4** golden | S2/S3 无 AST/IR golden（仅 SQL golden） | 低 |
+| **F7** builtin | g4 有 380+ 函数，当前 134（低频函数按需补） | 极低 |
+| **B1** 后端框架 | S2 sqlbuild 包（当前 emit 内联）；S3 PhysicalStep（当前 ir.Join.Hint 代替） | 低：架构简化（DESIGN 对齐但非完整 PhysicalPlan） |
+| **B4** duckdb | S2 列式优化；S3 Arrow 零拷贝；S5 aggregates.go | 低：复用 pg emit 可用；原生优化缺失 |
+| **S1** API 骨架 | S3 Engine 类型（当前 ExecOn 函数式 API）；S6 datasource 文件加载 | 低 |
+| **S2** exec | S3 后端直发 Arrow Record（当前 columnar 包待接入后端） | 低 |
+| **S5** CLI | S1 arrow/parquet 输出格式 | 低 |
 
 ### ❌ 完全缺失
 | Phase | 内容 | 优先级 |
@@ -110,3 +118,14 @@
 - ✅ **O4 Join AltPlan** — cost-based join-method selection（Hash/NestLoop/Merge hint + IndexLookup cost），
   ir.JoinHint + pg_hint_plan emit + graceful degrade 验证（commits f0117d9–816b1b1 + 4f01a14）。
   生产安全已验证：hint 在无 pg_hint_plan 的 stock postgres:16 上正确执行。
+- ✅ **F5.S1/S7 scope + strict mode** — Scope stack（let 嵌套 + shadow）+ StrictMode（warning→error 升级）。
+- ✅ **F7.S1 Signature** — Params/ReturnType/Kind/FuncKind 结构 + 60+ 函数签名注册。
+- ✅ **I3.S3 projection.go** — ColSet + Projection 列集追踪。
+- ✅ **I2.S4/S5** — FuncCall.Caps 从 F7 Spec 填充 + KQL200/201 翻译诊断码。
+- ✅ **I4.S2 YAML dump** — SprintYAML 结构化 IR dump。
+- ✅ **O5.S1 cost dump** — cost/dump.go per-stage 代价标注。
+- ✅ **B1.S5 types.go** — KQL→SQL 类型映射 + DDL 生成。
+- ✅ **B3.S4 MATERIALIZED hint** — pg 14+ CTE 物化策略。
+- ✅ **S2.S2 schema.go** — Schema/ColumnDesc 描述。
+- ✅ **S5.S6 README** — cmd/kql/README.md。
+- ✅ **T4.S2/S3 golden** — IR golden 测试框架。
