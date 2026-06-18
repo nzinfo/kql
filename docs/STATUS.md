@@ -134,5 +134,5 @@ KQL 文本
 3. **PostProc 框架** — 让 mv-expand/parse/make-series 真正执行（而非 passthrough）
 4. **类型推断** — binder 填 Col.T，让更多函数翻译正确
 5. ✅ **更多 builtin** — 已抽全 kqlparser 386 标量+39 聚合（433 catalog names）
-6. **饱和语义分析查询改写**（未来方向）：引入基于饱和语义（saturation semantics）的查询改写机制——分析列取值饱和性（cardinality cap）消除冗余 distinct/union、折叠恒真/恒假谓词、识别幂等投影。与 O2 规则引擎正交，可作 O6.S4 探索方向。
+6. ✅ **饱和语义改写 O6.S4 已完成**：SaturationRewrite 规则——(a) 幂等 distinct 消除（Card==RowCount 列上 distinct 是 no-op）；(b) isnotnull(NOT NULL 列)恒真折叠；(c) isnull(NOT NULL 列)恒假折叠。stats-gated（无 catalog 则 no-op）。与 O2 正交。
 6. **T-series 扩展** — 更多语料（Azure-Sentinel 仓库全量）、跨后端等价性测试
