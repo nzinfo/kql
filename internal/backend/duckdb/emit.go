@@ -713,6 +713,52 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		name = "bit_or"
 	case "binary_all_xor":
 		name = "bit_xor"
+	// --- Round 4 DuckDB scalar overrides (names differ) ---
+	case "max_of":
+		name = "greatest"
+	case "min_of":
+		name = "least"
+	case "notnull":
+		name = "coalesce"
+	case "binary_and":
+		name = "bit_and"
+	case "binary_or":
+		name = "bit_or"
+	case "binary_xor":
+		name = "bit_xor"
+	case "binary_not":
+		name = "bit_not"
+	case "binary_shift_left":
+		name = "shift_left"
+	case "binary_shift_right":
+		name = "shift_right"
+	case "cot":
+		// DuckDB has no cot; 1/tan.
+		if len(n.Args) > 0 {
+			arg, err := e.emitExpr(n.Args[0], alias)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("(1.0 / tan(%s))", arg), nil
+		}
+	case "datetime", "todatetime":
+		if len(n.Args) > 0 {
+			arg, err := e.emitExpr(n.Args[0], alias)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%s::TIMESTAMP", arg), nil
+		}
+	case "unixtime_seconds_todatetime":
+		if len(n.Args) > 0 {
+			arg, err := e.emitExpr(n.Args[0], alias)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("to_timestamp(%s)", arg), nil
+		}
+	case "gettype":
+		name = "typeof"
 	}
 	// Generic: emit as name(args...).
 	var args []string

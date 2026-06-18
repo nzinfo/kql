@@ -375,6 +375,33 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 	case "binary_all_xor":
 		// pg has no bit_xor until 14; use a byte-agg workaround fallback to bit_or.
 		return fmt.Sprintf("bit_or(%s::bigint)", args[0]), nil
+	// --- Round 4 pg-specific scalar overrides (names differ from SQLite) ---
+	case "max_of":
+		return fmt.Sprintf("GREATEST(%s)", strings.Join(args, ", ")), nil
+	case "min_of":
+		return fmt.Sprintf("LEAST(%s)", strings.Join(args, ", ")), nil
+	case "notnull":
+		return fmt.Sprintf("coalesce(%s)", strings.Join(args, ", ")), nil
+	case "binary_and":
+		return fmt.Sprintf("(%s & %s)", args[0], args[1]), nil
+	case "binary_or":
+		return fmt.Sprintf("(%s | %s)", args[0], args[1]), nil
+	case "binary_xor":
+		return fmt.Sprintf("(%s # %s)", args[0], args[1]), nil
+	case "binary_not":
+		return fmt.Sprintf("(~%s::bigint)", args[0]), nil
+	case "binary_shift_left":
+		return fmt.Sprintf("(%s << %s)", args[0], args[1]), nil
+	case "binary_shift_right":
+		return fmt.Sprintf("(%s >> %s)", args[0], args[1]), nil
+	case "todatetime":
+		return fmt.Sprintf("(%s)::timestamp", args[0]), nil
+	case "unixtime_seconds_todatetime":
+		return fmt.Sprintf("to_timestamp(%s)", args[0]), nil
+	case "unixtime_milliseconds_todatetime":
+		return fmt.Sprintf("to_timestamp(%s / 1000.0)", args[0]), nil
+	case "gettype":
+		return fmt.Sprintf("pg_typeof(%s)::text", args[0]), nil
 	}
 	// Catalog-driven translations (tostring→CAST, iff→CASE, dcount→COUNT(DISTINCT), ...)
 	if spec := builtin.Lookup(n.Name); spec != nil {
