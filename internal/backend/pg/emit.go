@@ -178,6 +178,9 @@ func (e *emitter) emitStage(inner string, st ir.Stage) (string, error) {
 		return e.emitJoin(from, prev, s)
 	case *ir.Union:
 		return e.emitUnion(from, prev, s)
+	case *ir.MvExpand, *ir.Parse:
+		// PostProc stages: client-side in exec; SELECT * on direct Emit.
+		return fmt.Sprintf("SELECT * FROM %s", from), nil
 	}
 	return "", fmt.Errorf("unsupported stage %T", st)
 }

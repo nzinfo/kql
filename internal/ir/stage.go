@@ -188,3 +188,36 @@ func (*Union) node()     {}
 func (*Union) stage()    {}
 func (*Distinct) node()  {}
 func (*Distinct) stage() {}
+
+// MvExpand is `| mv-expand Name=Expr` — explode an array/dynamic column into
+// multiple rows (one per element). A PostProc stage: executed client-side by
+// exec.applyPostProc when the backend lacks UNNEST (sqlite); pg/DuckDB may
+// emit it as a lateral join (future). The ColName is the extracted element
+// column name; SourceExpr is the array expression (typically a bare column).
+type MvExpand struct {
+	Position token.Pos
+	ColName  string // name of the exploded output column
+	Source   Expr   // array/dynamic expression to explode (usually *Col)
+}
+
+func (s *MvExpand) Pos() token.Pos { return s.Position }
+
+// Parse is `| parse [Kind] Target with Pattern` — regex/string extraction
+// into new columns. A PostProc stage: executed client-side by exec.applyPostProc
+// (regex match + capture-group → new columns). IsWhere (parse-where) drops
+// non-matching rows; plain parse keeps all rows with null captures.
+type Parse struct {
+	Position token.Pos
+	Kind     string // "", "simple", "regex", "relaxed"
+	Target   Expr   // expression to parse (usually a column)
+	Pattern  string // raw pattern (string with *capture* placeholders)
+	IsWhere  bool   // parse-where: filter non-matching rows
+}
+
+func (s *Parse) Pos() token.Pos { return s.Position }
+
+// Stage markers for PostProc stages.
+func (*MvExpand) node()  {}
+func (*MvExpand) stage() {}
+func (*Parse) node()     {}
+func (*Parse) stage()    {}

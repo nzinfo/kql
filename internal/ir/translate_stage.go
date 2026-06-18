@@ -89,10 +89,17 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		// a function registry + PostProc; emit pass-through for now.
 		return t.translatePassthrough(n.Pos())
 	case *ast.MvExpandOp:
-		// mv-expand: explode array column → multiple rows. No direct SQL in the
-		// minimal path (sqlite has no UNNEST; pg/duckdb do). Emit as a
-		// pass-through with a NOTE marker — real impl uses a lateral join /
-		// UNNEST in the backend (NeedsPostProc for sqlite).
+		// mv-expand: explode array/dynamic column → multiple rows. Emit a real
+		// MvExpand IR stage (PostProc — client-side for sqlite, future lateral
+		// join for pg/duckdb). The first column's expr is the source array;
+		// its name is the exploded output column.
+		if len(n.Cols) > 0 && n.Cols[0].Name != nil {
+			return &MvExpand{
+				Position: n.Pos(),
+				ColName:  n.Cols[0].Name.Name,
+				Source:   t.translateExpr(n.Cols[0].Expr),
+			}
+		}
 		return t.translatePassthrough(n.Pos())
 	case *ast.MvApplyOp:
 		// mv-apply: apply a sub-query to each array element. Even more complex
@@ -113,9 +120,15 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		// fill); emit pass-through for the minimal loop.
 		return t.translatePassthrough(n.Pos())
 	case *ast.ParseOp:
-		// parse [Kind] Expr with <pattern>: regex extraction into columns.
-		// No equivalent without a regex-extract emit; pass-through + flag.
-		return t.translatePassthrough(n.Pos())
+		// parse [Kind] Target with Pattern: regex/string extraction into new
+		// columns. Emit a real Parse IR stage (PostProc — client-side regex).
+		return &Parse{
+			Position: n.Pos(),
+			Kind:     n.Kind,
+			Target:   t.translateExpr(n.Target),
+			Pattern:  n.Pattern,
+			IsWhere:  n.IsWhere,
+		}
 	}
 	t.errorf(op.Pos(), "KQL010: unsupported operator %T in IR translation", op)
 	return nil
