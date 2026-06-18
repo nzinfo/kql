@@ -90,6 +90,7 @@ func emitSource(src ir.Source) (string, error) {
 		return quoteIdent(s.Table), nil
 	case *ir.SourceDatatableLit:
 		return pgEmitDatatableValues(s), nil
+	case nil:
 		return "(SELECT 1)", nil
 	}
 	return "", fmt.Errorf("unsupported source %T", src)

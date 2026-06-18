@@ -72,7 +72,7 @@ func init() {
 		{Name: "strcat_array", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true}, // join array w/ delim
 		{Name: "strcat_delim", MinArgs: 2, MaxArgs: -1, NeedsPostProc: true},
 		{Name: "strcmp", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true}, // sqlite strcmp needs collation ext
-		{Name: "strrep", MinArgs: 2, MaxArgs: 3, SQLite: "replace(replace(..., '', ''))", NeedsPostProc: true},
+		{Name: "strrep", MinArgs: 2, MaxArgs: 3, NeedsPostProc: true}, // repeat string N times (no portable sqlite form)
 		{Name: "repeat", MinArgs: 2, MaxArgs: 2, NeedsPostProc: true}, // repeat string N times
 		{Name: "translate", MinArgs: 3, MaxArgs: 3, NeedsPostProc: true},
 		{Name: "replace_strings", MinArgs: 3, MaxArgs: 3, NeedsPostProc: true},

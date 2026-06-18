@@ -679,19 +679,51 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		}
 	case "sumif":
 		if len(n.Args) >= 2 {
-			return fmt.Sprintf("sum(CASE WHEN %s THEN %s ELSE 0 END)", n.Args[1], n.Args[0]), nil
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("sum(CASE WHEN %s THEN %s ELSE 0 END)", y, x), nil
 		}
 	case "avgif":
 		if len(n.Args) >= 2 {
-			return fmt.Sprintf("avg(CASE WHEN %s THEN %s END)", n.Args[1], n.Args[0]), nil
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("avg(CASE WHEN %s THEN %s END)", y, x), nil
 		}
 	case "maxif":
 		if len(n.Args) >= 2 {
-			return fmt.Sprintf("max(CASE WHEN %s THEN %s END)", n.Args[1], n.Args[0]), nil
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("max(CASE WHEN %s THEN %s END)", y, x), nil
 		}
 	case "minif":
 		if len(n.Args) >= 2 {
-			return fmt.Sprintf("min(CASE WHEN %s THEN %s END)", n.Args[1], n.Args[0]), nil
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("min(CASE WHEN %s THEN %s END)", y, x), nil
 		}
 	case "make_list_if":
 		name = "list" // best-effort: list(CASE WHEN pred THEN col END)
@@ -762,15 +794,39 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 	// --- IPv4/IPv6: DuckDB has native IP types via ipv4/ipv6 extension or built-ins ---
 	case "ipv4_is_match", "ipv4_compare":
 		if len(n.Args) >= 2 {
-			return fmt.Sprintf("(%s = %s OR %s <<= %s)", n.Args[0], n.Args[1], n.Args[0], n.Args[1]), nil
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("(%s = %s OR %s <<= %s)", x, y, x, y), nil
 		}
 	case "ipv4_is_in_range":
 		if len(n.Args) >= 2 {
-			return fmt.Sprintf("(%s <<= %s)", n.Args[0], n.Args[1]), nil
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("(%s <<= %s)", x, y), nil
 		}
 	case "has_ipv4":
 		if len(n.Args) >= 2 {
-			return fmt.Sprintf("(position(%s in %s) > 0)", n.Args[1], n.Args[0]), nil
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil {
+				return "", e1
+			}
+			if e2 != nil {
+				return "", e2
+			}
+			return fmt.Sprintf("(position(%s in %s) > 0)", y, x), nil
 		}
 	}
 	// Generic: emit as name(args...).
