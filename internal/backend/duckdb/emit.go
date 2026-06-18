@@ -753,14 +753,24 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		name = "least"
 	case "notnull":
 		name = "coalesce"
-	case "binary_and":
-		name = "bit_and"
-	case "binary_or":
-		name = "bit_or"
-	case "binary_xor":
-		name = "bit_xor"
+	case "binary_and", "binary_or", "binary_xor":
+		// DuckDB bitwise ops are INFIX operators (& | #), not functions.
+		if len(n.Args) >= 2 {
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			y, e2 := e.emitExpr(n.Args[1], alias)
+			if e1 != nil { return "", e1 }
+			if e2 != nil { return "", e2 }
+			op := "&"
+			if n.Name == "binary_or" { op = "|" }
+			if n.Name == "binary_xor" { op = "#" }
+			return fmt.Sprintf("(%s %s %s)", x, op, y), nil
+		}
 	case "binary_not":
-		name = "bit_not"
+		if len(n.Args) >= 1 {
+			x, e1 := e.emitExpr(n.Args[0], alias)
+			if e1 != nil { return "", e1 }
+			return fmt.Sprintf("(~%s)", x), nil
+		}
 	case "binary_shift_left":
 		name = "shift_left"
 	case "binary_shift_right":
