@@ -255,7 +255,7 @@ func ExecOptimized(ctx context.Context, bk backend.Backend, query string, opt Op
 	defaultEngine.Optimize(pipe)
 	// O3 cost-based decision (opt-in).
 	if opt.Policy != "" {
-		pol := policyFor(opt.Policy, catalog)
+		pol := policyFor(Policy(opt.Policy), catalog)
 		est := cost.NewEstimator(catalog)
 		po := decision.PredicateOrder{Policy: pol, Estimator: est}
 		if src, ok := pipe.Source.(*ir.SourceTable); ok {
@@ -292,12 +292,26 @@ func ExecOptimized(ctx context.Context, bk backend.Backend, query string, opt Op
 // KQL009 "column not found" errors with KQL context BEFORE execution, rather
 // than a raw SQLite "no such column" at runtime.
 func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, error) {
+	return ExecOnOpt(ctx, bk, query, ExecOpt{})
+}
+
+// ExecOpt controls optional cost-based optimization in ExecOnOpt.
+type ExecOpt struct {
+	// Policy enables cost-based decisions (predicate ordering, join plan).
+	// Empty = no cost-based optimization (only always-safe O2 rules).
+	Policy Policy
+	// StatsPath is the path to a stats catalog YAML for cost estimation.
+	StatsPath string
+}
+
+// ExecOnOpt is the configurable version of ExecOn. When Policy + StatsPath are
+// provided, applies cost-based optimization (PredicateOrder, JoinPlan, ViewMatch,
+// TwoStageAgg) in addition to the always-safe O2 rules.
+func ExecOnOpt(ctx context.Context, bk backend.Backend, query string, opt ExecOpt) (*Result, error) {
 	pipe, err := ParseTranslate(query)
 	if err != nil {
 		return nil, err
 	}
-	// Bind: validate column references against the source schema (if the
-	// backend can provide one). Bind errors are surfaced like parse errors.
 	var diags diagnostic.List
 	if prov, ok := bk.(binderProvider); ok {
 		if _, berr := binder.Bind(pipe, prov, &diags); berr != nil {
@@ -307,18 +321,38 @@ func ExecOn(ctx context.Context, bk backend.Backend, query string) (*Result, err
 			return nil, &Error{diags: diags, stage: "bind"}
 		}
 	}
-	// Optimize: run the rule-based IR rewriter (predicate pushdown, etc.) to
-	// fixpoint. Rules are dialect-agnostic; the rewritten pipeline is
-	// semantically equivalent and emits the same results. Optimization never
-	// fails the query (a rule bug would change IR but keep emitting valid SQL).
-	defaultEngine.Optimize(pipe)
-	// Execute: emit SQL + run on backend, with client-side post-processing
-	// for operators the backend can't express (mv-expand etc.).
+	// O2 rules (always-safe rewrites).
+	ruleSet := []rules.RewriteRule{
+		rules.ConstantFold{}, rules.PredicatePushdown{}, rules.ColumnPrune{},
+		rules.PredicatePushdownUnion{},
+	}
+	var catalog *stats.Catalog
+	if opt.StatsPath != "" {
+		catalog, _, err = stats.Load(opt.StatsPath)
+		if err == nil {
+			if len(catalog.Views) > 0 {
+				ruleSet = append(ruleSet, rules.ViewMatch{Catalog: catalog})
+			}
+			ruleSet = append(ruleSet, rules.TwoStageAgg{Catalog: catalog})
+		}
+	}
+	rules.NewEngine(ruleSet...).Optimize(pipe)
+	// Cost-based decisions (opt-in).
+	if opt.Policy != "" && catalog != nil {
+		pol := policyFor(opt.Policy, catalog)
+		est := cost.NewEstimator(catalog)
+		po := decision.PredicateOrder{Policy: pol, Estimator: est}
+		if src, ok := pipe.Source.(*ir.SourceTable); ok {
+			po.Table = src.Table
+		}
+		po.Apply(pipe)
+		jp := decision.JoinPlan{Policy: pol, Catalog: catalog, Weights: cost.DefaultWeights(bk.Dialect().String())}
+		jp.Apply(pipe)
+	}
 	er, err := exec.ExecPipeline(ctx, bk, pipe)
 	if err != nil {
 		return nil, err
 	}
-	// Convert exec.Result to backend.Result for the public Result wrapper.
 	return &Result{&backend.Result{
 		Columns: execColsToBackend(er.Columns),
 		Rows:    er.Rows,
