@@ -402,6 +402,29 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		return fmt.Sprintf("to_timestamp(%s / 1000.0)", args[0]), nil
 	case "gettype":
 		return fmt.Sprintf("pg_typeof(%s)::text", args[0]), nil
+	// --- IPv4/IPv6: pg has native inet/cidr support (Sentinel security) ---
+	case "ipv4_is_match":
+		// ipv4_is_match(ip, cidr [, bounded]) → ip::inet <<= cidr::inet
+		if len(args) >= 2 {
+			return fmt.Sprintf("(%s::inet = %s::inet OR %s::inet <<= %s::inet)", args[0], args[1], args[0], args[1]), nil
+		}
+	case "ipv4_is_in_range":
+		if len(args) >= 2 {
+			return fmt.Sprintf("(%s::inet <<= %s::inet)", args[0], args[1]), nil
+		}
+	case "ipv4_compare":
+		if len(args) >= 2 {
+			return fmt.Sprintf("(%s::inet = %s::inet)", args[0], args[1]), nil // simplified equality
+		}
+	case "ipv6_is_match":
+		if len(args) >= 2 {
+			return fmt.Sprintf("(%s::inet = %s::inet OR %s::inet <<= %s::inet)", args[0], args[1], args[0], args[1]), nil
+		}
+	case "has_ipv4":
+		// has_ipv4(text, ip): text contains the ip. pg: text::inet or strpos.
+		if len(args) >= 2 {
+			return fmt.Sprintf("(position(%s in %s) > 0)", args[1], args[0]), nil
+		}
 	}
 	// Catalog-driven translations (tostring→CAST, iff→CASE, dcount→COUNT(DISTINCT), ...)
 	if spec := builtin.Lookup(n.Name); spec != nil {

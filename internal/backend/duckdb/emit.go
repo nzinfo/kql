@@ -759,6 +759,19 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		}
 	case "gettype":
 		name = "typeof"
+	// --- IPv4/IPv6: DuckDB has native IP types via ipv4/ipv6 extension or built-ins ---
+	case "ipv4_is_match", "ipv4_compare":
+		if len(n.Args) >= 2 {
+			return fmt.Sprintf("(%s = %s OR %s <<= %s)", n.Args[0], n.Args[1], n.Args[0], n.Args[1]), nil
+		}
+	case "ipv4_is_in_range":
+		if len(n.Args) >= 2 {
+			return fmt.Sprintf("(%s <<= %s)", n.Args[0], n.Args[1]), nil
+		}
+	case "has_ipv4":
+		if len(n.Args) >= 2 {
+			return fmt.Sprintf("(position(%s in %s) > 0)", n.Args[1], n.Args[0]), nil
+		}
 	}
 	// Generic: emit as name(args...).
 	var args []string
