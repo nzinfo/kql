@@ -306,3 +306,106 @@ func TestPrint_NilPipeline(t *testing.T) {
 		t.Errorf("nil pipeline should mention nil: %q", out)
 	}
 }
+
+
+// --- I5 IR equivalence tests ---
+
+// TestEquiv_ReorderedPredicates: `where a > 1 and b < 2` == `where b < 2 and a > 1`.
+func TestEquiv_ReorderedPredicates(t *testing.T) {
+	mkPipe := func(first, second Expr) *Pipeline {
+		return &Pipeline{
+			Source: &SourceTable{Table: "T"},
+			Stages: []Stage{
+				&Filter{Predicate: &BinOp{Op: token.AND, X: first, Y: second}},
+			},
+		}
+	}
+	a := &BinOp{Op: token.GTR, X: &Col{Name: "a"}, Y: &Lit{Value: int64(1), HasValue: true, T: TypeLong}}
+	b := &BinOp{Op: token.LSS, X: &Col{Name: "b"}, Y: &Lit{Value: int64(2), HasValue: true, T: TypeLong}}
+	pipeA := mkPipe(a, b)
+	pipeB := mkPipe(b, a) // reordered
+	if !Equivalent(pipeA, pipeB) {
+		t.Error("reordered AND predicates should be equivalent")
+	}
+}
+
+// TestEquiv_DifferentPredicates: `where a > 1` != `where a > 2`.
+func TestEquiv_DifferentPredicates(t *testing.T) {
+	mkPipe := func(val int64) *Pipeline {
+		return &Pipeline{
+			Source: &SourceTable{Table: "T"},
+			Stages: []Stage{
+				&Filter{Predicate: &BinOp{Op: token.GTR, X: &Col{Name: "a"}, Y: &Lit{Value: val, HasValue: true, T: TypeLong}}},
+			},
+		}
+	}
+	if Equivalent(mkPipe(1), mkPipe(2)) {
+		t.Error("different predicates should NOT be equivalent")
+	}
+}
+
+// TestEquiv_SamePipeline: identical pipelines are equivalent.
+func TestEquiv_SamePipeline(t *testing.T) {
+	pipe := &Pipeline{
+		Source: &SourceTable{Table: "T"},
+		Stages: []Stage{
+			&Filter{Predicate: &Col{Name: "x"}},
+			&Limit{Count: &Lit{Value: int64(10), HasValue: true, T: TypeLong}},
+		},
+	}
+	if !Equivalent(pipe, pipe) {
+		t.Error("identical pipelines should be equivalent")
+	}
+}
+
+// TestEquiv_DifferentSource: different tables are NOT equivalent.
+func TestEquiv_DifferentSource(t *testing.T) {
+	pipeA := &Pipeline{Source: &SourceTable{Table: "T1"}}
+	pipeB := &Pipeline{Source: &SourceTable{Table: "T2"}}
+	if Equivalent(pipeA, pipeB) {
+		t.Error("different source tables should NOT be equivalent")
+	}
+}
+
+// TestEquiv_SortKeysCanonicalized: `sort by a, b` == `sort by a, b` (same order).
+func TestEquiv_SortKeysCanonicalized(t *testing.T) {
+	mkPipe := func() *Pipeline {
+		return &Pipeline{
+			Source: &SourceTable{Table: "T"},
+			Stages: []Stage{
+				&Sort{Keys: []SortKey{
+					{Expr: &Col{Name: "a"}, Desc: false},
+					{Expr: &Col{Name: "b"}, Desc: true},
+				}},
+			},
+		}
+	}
+	if !Equivalent(mkPipe(), mkPipe()) {
+		t.Error("same sort should be equivalent")
+	}
+}
+
+// TestEquiv_NilPipelines: nil == nil is true.
+func TestEquiv_NilPipelines(t *testing.T) {
+	if !Equivalent(nil, nil) {
+		t.Error("nil == nil should be true")
+	}
+	if Equivalent(nil, &Pipeline{}) {
+		t.Error("nil != non-nil should be false")
+	}
+}
+
+// TestCanonicalize_ProducesString: canonicalize produces a stable string.
+func TestCanonicalize_ProducesString(t *testing.T) {
+	pipe := &Pipeline{
+		Source: &SourceTable{Table: "events"},
+		Stages: []Stage{
+			&Filter{Predicate: &Col{Name: "x"}},
+		},
+	}
+	cp := Canonicalize(pipe)
+	s := canonicalString(cp)
+	if !strings.Contains(s, "events") || !strings.Contains(s, "filter") {
+		t.Errorf("canonical string missing expected parts: %q", s)
+	}
+}
