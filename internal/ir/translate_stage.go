@@ -70,9 +70,12 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		// Schema introspection — no SQL equivalent in the minimal loop; pass-through.
 		return t.translatePassthrough(n.Pos())
 	case *ast.SerializeOp:
-		// Forces ordering; if columns given, behaves like project (ordered).
+		// serialize forces materialization + ordering. With columns (e.g.
+		// `serialize rn = row_number()`), it ADDS those columns while keeping all
+		// existing columns — like extend, not project. Without columns it's a
+		// pure ordering marker (passthrough).
 		if len(n.Cols) > 0 {
-			return &Project{Position: n.Pos(), Cols: t.translateNamedList(n.Cols)}
+			return &Extend{Position: n.Pos(), Cols: t.translateNamedList(n.Cols)}
 		}
 		return t.translatePassthrough(n.Pos())
 	case *ast.ExternalDataOp:

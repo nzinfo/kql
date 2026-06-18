@@ -32,6 +32,12 @@ type Spec struct {
 	// NeedsPostProc marks functions that cannot be computed in SQL on the
 	// target backend and must be done client-side (sqlite lacks them).
 	NeedsPostProc bool
+
+	// MaxSQLArgs is the number of arguments the SQLite template actually
+	// consumes. If > 0 and fewer than the call's arg count, the extras are
+	// KQL-only (e.g. make_set's maxSize limit) and are dropped at emit. 0 means
+	// all args map to template %s placeholders (the default).
+	MaxSQLArgs int
 }
 
 // Lookup returns the Spec for a function name (case-insensitive), or nil if
@@ -157,9 +163,9 @@ var catalog = func() map[string]Spec {
 	add(Spec{Name: "max", MinArgs: 1, MaxArgs: 1, IsAggregate: true, SQLite: "MAX(%s)"})
 	add(Spec{Name: "dcount", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "COUNT(DISTINCT %s)"})
 	add(Spec{Name: "countif", MinArgs: 1, MaxArgs: 1, IsAggregate: true, SQLite: "SUM(CASE WHEN %s THEN 1 ELSE 0 END)"})
-	add(Spec{Name: "make_set", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(DISTINCT %s)"})
+	add(Spec{Name: "make_set", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(DISTINCT %s)", MaxSQLArgs: 1}) // 2nd arg maxSize is KQL-only
 	add(Spec{Name: "makeset", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(DISTINCT %s)"})
-	add(Spec{Name: "make_list", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(%s)"})
+	add(Spec{Name: "make_list", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(%s)", MaxSQLArgs: 1}) // 2nd arg maxSize is KQL-only
 	add(Spec{Name: "makelist", MinArgs: 1, MaxArgs: 2, IsAggregate: true, SQLite: "group_concat(%s)"})
 	add(Spec{Name: "percentile", MinArgs: 2, MaxArgs: 2, IsAggregate: true, SQLite: "", NeedsPostProc: true})
 	add(Spec{Name: "stdev", MinArgs: 1, MaxArgs: 1, IsAggregate: true, SQLite: ""}) // sqlite lacks stdev by default
@@ -291,8 +297,8 @@ func init() {
 		{Name: "dcountif", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "COUNT(DISTINCT CASE WHEN %s THEN %s END)"},
 
 		// --- *_if list/set builders ---
-		{Name: "make_list_if", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "group_concat(CASE WHEN %s THEN %s END)"},
-		{Name: "make_set_if", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "group_concat(DISTINCT CASE WHEN %s THEN %s END)"},
+		{Name: "make_list_if", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "group_concat(CASE WHEN %s THEN %s END)", MaxSQLArgs: 2},
+		{Name: "make_set_if", MinArgs: 2, MaxArgs: 3, IsAggregate: true, SQLite: "group_concat(DISTINCT CASE WHEN %s THEN %s END)", MaxSQLArgs: 2},
 
 		// --- bag (JSON object) aggregations: need JSON aggregation ---
 		{Name: "make_bag", MinArgs: 1, MaxArgs: 2, IsAggregate: true, NeedsPostProc: true},

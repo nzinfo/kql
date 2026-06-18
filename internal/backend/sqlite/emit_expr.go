@@ -335,6 +335,11 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 			return fmt.Sprintf("MIN(%s)", args[0]), nil
 		}
 		if spec.SQLite != "" {
+			// Drop KQL-only args beyond MaxSQLArgs (e.g. make_set's maxSize limit
+			// has no SQL equivalent and would break DISTINCT-1-arg aggregates).
+			if spec.MaxSQLArgs > 0 && len(args) > spec.MaxSQLArgs {
+				args = args[:spec.MaxSQLArgs]
+			}
 			return applySQLiteTemplate(spec.SQLite, args), nil
 		}
 		// No direct SQL template. If this is a NeedsPostProc function, try the
@@ -344,6 +349,15 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 			e.notePostProc(n.Name)
 			if fb := builtin.LookupFailback(n.Name); fb != "" {
 				return applySQLiteTemplate(fb, args), nil
+			}
+			// Window functions require OVER() context. For row_number() with no args
+			// (the common serialize case), emit ROW_NUMBER() OVER () — valid in a
+			// subquery/CTE. Others surface a clear error.
+			if isWindowFunction(n.Name) {
+				if strings.EqualFold(n.Name, "row_number") && len(n.Args) == 0 {
+					return "ROW_NUMBER() OVER ()", nil
+				}
+				return "", fmt.Errorf("unsupported function %q (window functions need OVER() context)", n.Name)
 			}
 		}
 	}
@@ -438,4 +452,16 @@ func (e *emitter) handleAggIf(name string, args []string) (string, error) {
 		return fmt.Sprintf("MIN(CASE WHEN %s THEN %s ELSE NULL END)", pred, value), nil
 	}
 	return fmt.Sprintf("MAX(CASE WHEN %s THEN %s ELSE NULL END)", pred, value), nil
+}
+
+
+// isWindowFunction reports whether a function name is a SQL window function
+// that requires OVER() context (and thus cannot be emitted as a bare call).
+func isWindowFunction(name string) bool {
+	switch strings.ToLower(name) {
+	case "row_number", "row_rank", "row_rank_dense", "row_rank_min",
+		"row_cumsum", "row_window_session", "prev", "next":
+		return true
+	}
+	return false
 }

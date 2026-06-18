@@ -87,14 +87,12 @@ var failbacks = map[string]string{
 	"array_contains":  "(instr(%s, %s) > 0)",
 	"array_concat":    "(%s || %s)",
 
-	// --- window functions: sqlite supports ROW_NUMBER/RANK/LAG/LEAD natively
-	// but only in OVER() context. As bare expressions they're invalid; we emit
-	// the native name so OVER() callers work, and bare-use surfaces a clear error.
-	"row_cumsum":        "SUM(%s)",
-	"row_number":        "ROW_NUMBER()",
-	"row_rank":          "RANK()",
-	"prev":              "LAG(%s)",
-	"next":              "LEAD(%s)",
+	// --- window functions (row_number/row_rank/prev/next/row_cumsum) are
+	// intentionally NOT in the fallback table: they require OVER() context which
+	// the emitter doesn't generate for bare expressions. A fallback that emits
+	// bare ROW_NUMBER() would always fail with "misuse of window function".
+	// Without a fallback they surface a clear "no such function" (honest: these
+	// need a window-plan, not a bare SQL approximation).
 
 	// --- network (sqlite has no inet; text comparison best-effort) ---
 	"ipv4_is_match":     "(%s = %s)",
