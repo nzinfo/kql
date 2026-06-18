@@ -36,6 +36,18 @@ func ExecPipeline(ctx context.Context, bk backend.Backend, pipe *ir.Pipeline) (*
 	if pipe == nil {
 		return nil, fmt.Errorf("nil pipeline")
 	}
+	// Step 1: Arrow execution path (if backend supports it and the build has
+	// -tags duckdb_arrow). When arrowExecHook is nil (no tag), this is a no-op.
+	if arrowExecHook != nil {
+		res, used, err := arrowExecHook(ctx, bk, pipe)
+		if err != nil {
+			return nil, err
+		}
+		if used {
+			return res, nil
+		}
+		// Not used → fall through to row path.
+	}
 	// O4: check for an IndexLookup-hinted join first (two-phase strategy).
 	// This runs BEFORE the normal path; if it applies, it returns early. If it
 	// can't apply (no keys extractable, too many keys), it falls back.
