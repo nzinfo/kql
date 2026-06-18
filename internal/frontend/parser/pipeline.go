@@ -87,11 +87,52 @@ func (p *Parser) parsePipedOperator() ast.Operator {
 		return p.parseAsOp(pipePos)
 	case token.INVOKE:
 		return p.parseInvokeOp(pipePos)
-	// P2 operators — parsed as passthroughs (semantics deferred; see NOTES.md §6).
-	// These produce real AST nodes only where worth it; the rest collapse to a
-	// generic pass-through that consumes tokens to the next stage boundary.
-	case token.TOPNESTED, token.PARTITION, token.FORK, token.LOOKUP,
-		token.FACET, token.SAMPLE, token.SAMPLEDISTINCT, token.REDUCE:
+	// P2/P3 operators — parsed to AST nodes for full grammar coverage (g4
+	// alignment). Translated as pass-through (semantics need PostProc / lateral
+	// joins / plugin frameworks — deferred). See ast/op_p2.go.
+	case token.PRINT:
+		return p.parsePrintOp(pipePos)
+	case token.RANGE:
+		return p.parseRangeOp(pipePos)
+	case token.FIND:
+		return p.parseFindOp(pipePos)
+	case token.SAMPLE:
+		return p.parseSampleOp(pipePos)
+	case token.SAMPLEDISTINCT:
+		return p.parseSampleDistinctOp(pipePos)
+	case token.LOOKUP:
+		return p.parseLookupOp(pipePos)
+	case token.SCAN:
+		return p.parseScanOp(pipePos)
+	case token.FORK:
+		return p.parseForkOp(pipePos)
+	case token.FACET:
+		return p.parseFacetOp(pipePos)
+	case token.REDUCE:
+		return p.parseReduceOp(pipePos)
+	case token.TOPHITTERS:
+		return p.parseTopHittersOp(pipePos)
+	case token.PARTITION:
+		return p.parsePartitionOp(pipePos)
+	case token.MACROEXPAND:
+		return p.parseMacroExpandOp(pipePos)
+	case token.EXECUTEANDCACHE:
+		return p.parseExecuteAndCacheOp(pipePos)
+	case token.ASSERTSCHEMA:
+		return p.parseAssertSchemaOp(pipePos)
+	// Graph operators (g4 graph-* rules) — parsed to AST, pass-through.
+	case token.GRAPHMATCH:
+		return p.parseGraphOp(pipePos, "graph-match")
+	case token.MAKEGRAPH:
+		return p.parseGraphOp(pipePos, "make-graph")
+	case token.GRAPHSHORTESTPATHS:
+		return p.parseGraphOp(pipePos, "graph-shortest-paths")
+	case token.GRAPHTOTABLE:
+		return p.parseGraphOp(pipePos, "graph-to-table")
+	case token.GRAPHMARKCOMPONENTS:
+		return p.parseGraphOp(pipePos, "graph-mark-components")
+	// Remaining passthroughs (tokens exist but grammar too complex for now).
+	case token.TOPNESTED:
 		return p.parsePassthroughOp(pipePos)
 	}
 	// Unknown operator: record an error and recover to the next | or ;.

@@ -99,6 +99,15 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		// than mv-expand (needs a correlated lateral subquery or client-side
 		// iteration). Pass-through for now.
 		return t.translatePassthrough(n.Pos())
+	// P2/P3 operators — parsed to AST for full grammar coverage, translated as
+	// pass-through. Real semantics need PostProc / lateral joins / plugins.
+	case *ast.PrintOp, *ast.RangeOp, *ast.FindOp, *ast.SampleOp,
+		*ast.SampleDistinctOp, *ast.LookupOp, *ast.ScanOp, *ast.ForkOp,
+		*ast.FacetOp, *ast.ReduceOp, *ast.TopHittersOp, *ast.PartitionOp,
+		*ast.MacroExpandOp, *ast.ExecuteAndCacheOp, *ast.AssertSchemaOp,
+		*ast.GraphMatchOp, *ast.MakeGraphOp, *ast.GraphShortestPathsOp,
+		*ast.GraphToTableOp, *ast.GraphMarkComponentsOp:
+		return t.translatePassthrough(n.Pos())
 	case *ast.MakeSeriesOp:
 		// make-series: time-series aggregation. Complex (needs binning + series
 		// fill); emit pass-through for the minimal loop.

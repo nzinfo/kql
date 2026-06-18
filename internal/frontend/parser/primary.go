@@ -113,8 +113,15 @@ func (p *Parser) parsePrimary() ast.Expr {
 // synthetic call so the whole form parses.
 func (p *Parser) parseIdentFollowed() ast.Expr {
 	name := p.parseIdentLike()
-	// Direct call: name(args).
-	if p.cur == token.LPAREN {
+	// Direct call: name(args). But NOT when the `(...)` group starts with a
+	// tabular operator keyword (summarize/where/extend/project/...) — that's a
+	// pipeline sub-query, not a function call. This is a general rule: the g4
+	// grammar distinguishes functionCallExpression from parenthesized pipeline
+	// expressions by checking whether the first token inside `(` is an operator.
+	// Without this guard, `partition by Computer (summarize count())` would
+	// mis-parse `Computer(summarize count())` as a call and fail on the inner
+	// `count`.
+	if p.cur == token.LPAREN && !p.lparenStartsPipeline() {
 		return p.parseCall(name)
 	}
 	// Source-form keyword with leading params: `union isfuzzy=true (...)`.

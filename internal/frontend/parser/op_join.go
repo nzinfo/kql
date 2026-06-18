@@ -84,6 +84,47 @@ func (p *Parser) isParenPipeline() bool {
 	return isPipe
 }
 
+// lparenStartsPipeline reports whether the current `(` begins a pipeline-like
+// sub-expression — either a `<source> |` pipeline OR a bare operator form like
+// `(summarize ...)`. The latter appear in operators like `partition by Col
+// (summarize count())`. When true, the caller should NOT treat the `(...)` as a
+// function call argument list.
+//
+// This uses a SIDE-EFFECT-FREE 1-token lookahead (just peek after `(`), NOT
+// isParenPipeline (which calls ParseExpr and can emit spurious diagnostics as
+// a side effect of the save/restore lookahead).
+func (p *Parser) lparenStartsPipeline() bool {
+	if p.cur != token.LPAREN {
+		return false
+	}
+	// Peek the token after `(` without consuming or emitting diagnostics.
+	s := p.save()
+	p.next() // consume (
+	afterParen := p.cur
+	p.restore(s)
+	// An operator-form sub-query starts with a tabular operator keyword.
+	return isPipelineOperatorToken(afterParen)
+}
+
+// isPipelineOperatorToken reports whether a token can ONLY start a tabular
+// operator sub-query (never a function call). This is intentionally NARROW — it
+// excludes tokens like count/where/filter/project/join which are also valid
+// function or column names. Only operators that have no function-call form are
+// included. This prevents mis-detecting `count(x)` or `project(x)` calls as
+// pipeline starts.
+func isPipelineOperatorToken(t token.Token) bool {
+	switch t {
+	case token.SUMMARIZE, token.EXTEND, token.SORT, token.ORDER,
+		token.TAKE, token.LIMIT, token.TOP, token.DISTINCT,
+		token.MVEXPAND, token.MVAPPLY, token.EVALUATE, token.RENDER,
+		token.CONSUME, token.GETSCHEMA, token.SERIALIZE,
+		token.FORK, token.FACET, token.REDUCE, token.PARTITION,
+		token.TOPNESTED, token.TOPHITTERS, token.SCAN, token.SAMPLEDISTINCT:
+		return true
+	}
+	return false
+}
+
 // joinKindFromParams maps a `kind=<value>` parameter (case-insensitive) to a
 // JoinKind. KQL kind values: innerunique, inner, left (leftouter), leftouter,
 // rightouter, fullouter. Returns JoinDefault if absent or unrecognised.

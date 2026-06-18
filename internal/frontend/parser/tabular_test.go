@@ -619,3 +619,24 @@ func TestMvApplyOpSimple(t *testing.T) {
 		t.Fatalf("op0 = %T, want *MvApplyOp", pipe.Ops[0])
 	}
 }
+
+// TestPartitionOp_ParenSubquery: `| partition by Col (summarize count())` must
+// parse without errors — the `(summarize ...)` is a sub-query, not a function
+// call. Regression test for the lparenStartsPipeline fix.
+func TestPartitionOp_ParenSubquery(t *testing.T) {
+	p := New("", `SecurityEvent | partition by Computer (summarize count())`)
+	p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Errorf("partition with sub-query should parse cleanly: %v", diags.Render())
+	}
+}
+
+// TestCountCallStillWorks: `count()` must still parse as a function call after
+// the lparenStartsPipeline fix (regression guard).
+func TestCountCallStillWorks(t *testing.T) {
+	p := New("", `T | summarize c = count() by state`)
+	p.Parse()
+	if diags := p.Diagnostics(); diags.HasErrors() {
+		t.Errorf("count() should parse cleanly: %v", diags.Render())
+	}
+}
