@@ -851,7 +851,10 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 	}
 	// NeedsPostProc functions without a DuckDB-specific override: try the
 	// failback approximation table before the raw NAME(args) passthrough.
-	if spec := builtin.Lookup(n.Name); spec != nil && spec.NeedsPostProc {
+	// Skip if the override already renamed the function (name != n.Name means
+	// a DuckDB-native function handles it; don't apply the sqlite failback).
+	if name == n.Name {
+		if spec := builtin.Lookup(n.Name); spec != nil && spec.NeedsPostProc {
 		if fb := builtin.LookupFailback(n.Name); fb != "" {
 			n := strings.Count(fb, "%s")
 			fill := args
@@ -867,6 +870,7 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 			}
 			return out, nil
 		}
+	}
 	}
 	return fmt.Sprintf("%s(%s)", name, strings.Join(args, ", ")), nil
 }

@@ -43,11 +43,11 @@ var failbacks = map[string]string{
 	"bag_remove_keys": "%s",   // lossy: return the bag unchanged
 	"bag_set_key":     "%s",   // lossy: return the bag unchanged
 
-	// --- stdev/variance population forms (sqlite lacks them) ---
-	// Approximate population stdev as sample stdev when both are needed; this is
-	// a known lossy approximation marked here explicitly.
-	"stdevp":     "%s", // caller may substitute; empty → see note below (left to override)
-	"variancep":  "%s",
+	// --- population statistics (sqlite lacks STDDEV_POP/VAR_POP) ---
+	// Compute via the identity: var_pop(x) = avg(x*x) - avg(x)^2,
+	// stddev_pop(x) = sqrt(var_pop(x)). Valid sqlite aggregate expressions.
+	"stdevp":    "sqrt(avg(%s * %s) - avg(%s) * avg(%s))",
+	"variancep": "avg(%s * %s) - avg(%s) * avg(%s)",
 
 	// --- binary reducers (sqlite has no aggregate bit_and/or/xor) ---
 	// These genuinely need a custom aggregate; leave empty → "unsupported".

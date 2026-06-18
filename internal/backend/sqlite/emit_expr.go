@@ -348,6 +348,13 @@ func (e *emitter) emitFuncCall(n *ir.FuncCall, alias string) (string, error) {
 		if spec.NeedsPostProc {
 			e.notePostProc(n.Name)
 			if fb := builtin.LookupFailback(n.Name); fb != "" {
+				// Some failback templates reference the single arg multiple times
+				// (e.g. stdevp = sqrt(avg(x*x) - avg(x)*avg(x)) uses x 4x). Pad
+				// args to match placeholder count by repeating the last arg.
+				nPlace := strings.Count(fb, "%s")
+				for len(args) < nPlace && len(args) > 0 {
+					args = append(args, args[len(args)-1])
+				}
 				return applySQLiteTemplate(fb, args), nil
 			}
 			// Window functions require OVER() context. For row_number() with no args
