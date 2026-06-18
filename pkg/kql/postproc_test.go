@@ -172,3 +172,24 @@ func TestPostProc_RegistryGeneralization(t *testing.T) {
 		}
 	}
 }
+
+// TestPostProc_MvApply: mv-apply explodes the array column (sub-pipeline
+// application is a follow-on; this verifies the explode half works).
+func TestPostProc_MvApply(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	db.Exec(`CREATE TABLE t (id INTEGER, tags TEXT)`)
+	db.Exec(`INSERT INTO t VALUES (1, '["a","b","c"]'), (2, '["x"]')`)
+	bk := sqlite.NewFromDB(db)
+	res, err := kql.ExecOn(context.Background(), bk, `t | mv-apply tag = tags on (tag)`)
+	if err != nil {
+		t.Fatalf("mv-apply: %v", err)
+	}
+	// Explodes like mv-expand: 3 + 1 = 4 rows.
+	if got := len(res.Rows()); got != 4 {
+		t.Errorf("mv-apply rows = %d, want 4", got)
+	}
+}

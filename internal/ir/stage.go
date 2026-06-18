@@ -240,3 +240,20 @@ func (s *MakeSeries) Pos() token.Pos { return s.Position }
 
 func (*MakeSeries) node()  {}
 func (*MakeSeries) stage() {}
+
+// MvApply is `| mv-apply Col to (Type) on <subquery> ...` — for each row,
+// iterate the array column and apply the sub-pipeline to each element,
+// expanding the result. A PostProc boundary stage: client-side iteration
+// (correlated lateral subquery in SQL is engine-specific). Cols is the
+// exploded element expression; OnExpr is the sub-pipeline body.
+type MvApply struct {
+	Position token.Pos
+	ColName  string   // name of the exploded element output column
+	Source   Expr     // array expression to iterate (usually *Col)
+	OnPipe   *Pipeline // sub-pipeline applied to each element (may be nil)
+}
+
+func (s *MvApply) Pos() token.Pos { return s.Position }
+
+func (*MvApply) node()  {}
+func (*MvApply) stage() {}

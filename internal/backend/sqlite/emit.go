@@ -244,7 +244,7 @@ func (e *emitter) emitStage(inner string, st ir.Stage) (string, error) {
 
 	case *ir.Union:
 		return e.emitUnion(fromClause, prev, s)
-	case *ir.MvExpand, *ir.Parse, *ir.MakeSeries:
+	case *ir.MvExpand, *ir.Parse, *ir.MakeSeries, *ir.MvApply:
 		// PostProc stages: executed client-side by exec.applyPostProc. When
 		// reached here (direct Emit without the exec split), pass through as
 		// SELECT * so the query is structurally valid (the real semantics run

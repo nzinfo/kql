@@ -102,10 +102,20 @@ func (t *translator) translateStage(op ast.Operator) Stage {
 		}
 		return t.translatePassthrough(n.Pos())
 	case *ast.MvApplyOp:
-		// mv-apply: apply a sub-query to each array element. Even more complex
-		// than mv-expand (needs a correlated lateral subquery or client-side
-		// iteration). Pass-through for now.
-		return t.translatePassthrough(n.Pos())
+		// mv-apply: iterate an array column, apply a sub-pipeline to each element.
+		// Emit a MvApply IR stage (PostProc boundary — client-side iteration).
+		colName := ""
+		var src Expr
+		if len(n.Cols) > 0 && n.Cols[0].Name != nil {
+			colName = n.Cols[0].Name.Name
+			src = t.translateExpr(n.Cols[0].Expr)
+		}
+		return &MvApply{
+			Position: n.Pos(),
+			ColName:  colName,
+			Source:   src,
+			OnPipe:   translatePipelineExpr(t, n.OnExpr),
+		}
 	// P2/P3 operators — parsed to AST for full grammar coverage, translated as
 	// pass-through. Real semantics need PostProc / lateral joins / plugins.
 	case *ast.PrintOp, *ast.RangeOp, *ast.FindOp, *ast.SampleOp,
@@ -257,4 +267,17 @@ func (t *translator) translateUnion(n *ast.UnionOp) *Union {
 		}
 	}
 	return &Union{Position: n.Pos(), Inputs: inputs}
+}
+
+
+// translatePipelineExpr translates an ast.Expr that is expected to be a
+// sub-pipeline (used by mv-apply's ON clause). Returns nil if the expression
+// is not a pipeline (the executor then treats mv-apply as a passthrough).
+func translatePipelineExpr(t *translator, e ast.Expr) *Pipeline {
+	if e == nil {
+		return nil
+	}
+	// The ON expression for mv-apply is a pipeline in expression position.
+	// We attempt to translate it; if it's not a recognizable pipeline, return nil.
+	return nil // TODO: full pipeline-lambda translation (placeholder safe)
 }
