@@ -124,7 +124,14 @@ func Explain(ctx context.Context, dsn, query string, policyName Policy, statsPat
 		catalog = c
 	}
 	// O2 rules (always-safe rewrites) → fixpoint.
-	ruleEngine := rules.NewEngine(rules.ConstantFold{}, rules.PredicatePushdown{}, rules.ColumnPrune{})
+	ruleSet := []rules.RewriteRule{
+		rules.ConstantFold{}, rules.PredicatePushdown{}, rules.ColumnPrune{},
+	}
+	// O6.S1: ViewMatch (when a catalog with views is available).
+	if catalog != nil && len(catalog.Views) > 0 {
+		ruleSet = append(ruleSet, rules.ViewMatch{Catalog: catalog})
+	}
+	ruleEngine := rules.NewEngine(ruleSet...)
 	_, ruleChanges := ruleEngine.Optimize(pipe)
 	// O3 cost-based decision (opt-in via policyName).
 	var decisions []string
