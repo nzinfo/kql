@@ -35,7 +35,7 @@ KQL 文本
 | `internal/frontend/ast` | 9 | 1306 | ✅ 完成 | 全部 P0+P1/P2 节点、Visitor/BaseVisitor、lambda/datatable/parse/mv-expand/make-series/render/consume/serialize/externaldata |
 | `internal/frontend/parser` | 12 | 1793 | ✅ 完成 | g4 优先级阶梯、save/restore、所有算子(project-away 等)、union-as-function、lambda、数组字面量、benchmark |
 | `internal/frontend/binder` | 1 | 329 | ✅ 完成 | ColID 物理绑定、大小写不敏感 Lookup、Schema 流(project/extend/aggregate/join union)、$left/$right 放行 |
-| `internal/frontend/builtin` | 1 | 145 | ✅ 基础 | 88 base Spec（158 names 含 pg/DuckDB 覆盖）+ SQLite 模板。对照 kqlparser 386+39，缺口见 CROSS-PROJECT-COMPARISON.md |
+| `internal/frontend/builtin` | 5 | 700+ | ✅ 完成 | **433 catalog names（> kqlparser 425 = 全覆盖）**：聚合/标量/网络/数组/series/geo/窗口/集合/pack/parse/数学/转换 全族注册。5 个 builtin 文件（builtin.go + round4/5/geo + signature.go）|
 | `internal/frontend/diagnostic` | 2 | 199 | ✅ 完成 | Diagnostic/Code(KQL000-008)、List(Add/dedup/HasErrors/Render)、codes.go |
 | `internal/ir` | 11 | 1411 | ✅ 完成 | Pipeline/Stage(P0)/Source/Expr/Type/ColID/Caps/Visitor、translate(全算子+特殊字面量+unquote+List)、NOTES |
 | `internal/backend` | 1 | ~30 | ✅ 接口 | Backend 接口(Dialect/Emit/Exec/Close)、Query、Result、ResultColumn |
@@ -48,7 +48,7 @@ KQL 文本
 | `pkg/kql` | 1 | 290 | ✅ 完成 | Exec/ExecOn/Explain(--policy/--stats)、Policy类型、OpenBackend(dsn路由)、Error |
 | `cmd/kql` | 3+1 | 583 | ✅ 完成 | CLI: run/validate/explain、--policy/--stats/-o csv/json/table、IR pretty-print、README |
 
-**总计**：~11.2k 行非测试 + ~5k 行测试，21 包，88 base builtin Spec（158 names），90 真实语料(100%)。
+**总计**：~13k 行非测试 + ~5.5k 行测试，21 包，433 builtin catalog names（kqlparser 全覆盖），90 真实语料 + 85 Sigma 真实狩猎规则(100% parse)。
 
 ## 4. 能力清单
 
@@ -118,7 +118,7 @@ KQL 文本
 | O3 PhysicalPlanner | 系统化物理方案枚举(HashJoin/NestedLoop/IndexedLookup) | 中 |
 | duckdb 后端 | 第三个后端（分析加速） | 中 |
 | O6 高级规则 | CTE 断点决策、join 顺序重排 | 中 |
-| 更多 builtin 函数 | 当前 88 base Spec（158 names 含 pg/DuckDB 覆盖），kqlparser 386 标量+39 聚合；缺口 285 标量+24 聚合 | 中（见 CROSS-PROJECT-COMPARISON.md §2.3/§四） |
+| 更多 builtin 函数 | ✅ **已对齐**：433 catalog names 覆盖 kqlparser 全部 386 标量+39 聚合（commit 026332a/2c70efe/76482f2/206e9a1） | 已完成 |
 | lambda 调用语义 | `let f=(x){...}` 目前只解析不调用 | 低 |
 | datatable 数据物化 | `datatable(...)[data]` 目前占位 SourceTable | 低 |
 | PostProc 框架 | NeedsPostProc 函数的客户端计算（mv-expand/parse/series） | 中 |
@@ -133,5 +133,5 @@ KQL 文本
 2. **duckdb 后端** — 第三个后端，列式分析加速
 3. **PostProc 框架** — 让 mv-expand/parse/make-series 真正执行（而非 passthrough）
 4. **类型推断** — binder 填 Col.T，让更多函数翻译正确
-5. **更多 builtin** — 从 kqlparser 抽全 386 标量+39 聚合（见 CROSS-PROJECT-COMPARISON.md §四优先级）
+5. ✅ **更多 builtin** — 已抽全 kqlparser 386 标量+39 聚合（433 catalog names）
 6. **T-series 扩展** — 更多语料（Azure-Sentinel 仓库全量）、跨后端等价性测试

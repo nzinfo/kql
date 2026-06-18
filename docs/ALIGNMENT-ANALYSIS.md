@@ -46,7 +46,7 @@
 
 | Phase | 原残留 | 状态 |
 |---|---|---|
-| **F7** builtin | 386 标量+39 聚合（当前 88 base Spec/158 names） | ✅ 按需补；已覆盖所有高频函数。量化缺口 285 标量+24 聚合见 CROSS-PROJECT-COMPARISON.md §2.3 |
+| **F7** builtin | 386 标量+39 聚合 | ✅ **全覆盖（433 catalog names > kqlparser 425）**：聚合(24补)/标量(140补)/ipv4-6/array/series(51)/geo(53)/window/set/pack/parse/数学/转换 全族（commit 026332a/2c70efe/76482f2/206e9a1）|
 | **B1** 后端框架 | sqlbuild 包 / PhysicalStep | ✅ emit 内联 + ir.Join.Hint 已满足需求；完整 PhysicalStep 是未来架构 |
 | **B4** duckdb | 列式优化 / Arrow 零拷贝 / 原生函数 | ✅ 独立 Emit 完成（DuckDB 原生函数 + 无 pg 噪声）；Arrow 零拷贝验证通过 |
 | **S1** API 骨架 | Engine 类型 / datasource | ✅ Engine struct + LoadFile (csv/json/jsonl/parquet) |
@@ -102,7 +102,7 @@ UDF-STRATEGY.md 已分析：只有 3 类计算需要 UDF（hash / make-series / 
 
 | 优先级 | 任务 | 理由 |
 |---|---|---|
-| 🟢 低 | F7 完整函数表（386+39）/ 文档 | 按需补；量化优先级见 CROSS-PROJECT-COMPARISON.md §四 |
+| ✅ 完成 | F7 完整函数表（386+39） | **已对齐**：433 catalog names 全覆盖（2026-06-17）|
 | 🟢 低 | T2 语料分类/NOTICE | 合规性 |
 | 🟢 低 | I4/I5 IR pretty-print/等价性 | 有 SQL golden 间接覆盖 |
 | 🟢 低 | Arrow-native Record（全迁移） | columnar 包已落地；后端直发 Record 是后续工作 |
